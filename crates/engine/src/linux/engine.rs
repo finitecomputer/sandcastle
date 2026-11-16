@@ -137,6 +137,7 @@ impl Vm {
             exit: None,
             started_at_ms: r.started_at_ms,
             memory_bytes: None,
+            memory_in_use_bytes: None,
         }
     }
 }
@@ -369,6 +370,7 @@ impl Engine {
     fn info_of(&self, vm: &Vm) -> Info {
         let mut i = vm.info();
         i.memory_bytes = self.cgroups.memory_current(vm.slot);
+        i.memory_in_use_bytes = self.cgroups.memory_in_use(vm.slot);
         i
     }
 

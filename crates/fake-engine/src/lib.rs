@@ -368,6 +368,7 @@ fn start_container(state: &Mutex<State>, name: &str, start: StartRequest) -> Res
         exit: None,
         started_at_ms: now_ms(),
         memory_bytes: None,
+        memory_in_use_bytes: None,
     };
     let (exit, _) = watch::channel(None);
     let line = format!("start {} (handler {})", info.image, handler.as_deref().map(|p| p.display().to_string()).unwrap_or_else(|| "none".into()));

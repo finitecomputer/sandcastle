@@ -287,6 +287,11 @@ pub struct Info {
     /// What the VM holds on the node now (its cgroup's charge).
     #[serde(default)]
     pub memory_bytes: Option<u64>,
+    /// Of that, what the node cannot take back: the charge less the host's
+    /// page cache of the VM's disks, which the host reclaims when it needs
+    /// the room. A node that admits by memory counts this.
+    #[serde(default)]
+    pub memory_in_use_bytes: Option<u64>,
 }
 
 /// How a container's run ended: `monitor()`'s answer.

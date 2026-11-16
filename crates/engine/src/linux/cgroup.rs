@@ -107,6 +107,14 @@ impl Subtree {
         std::fs::read_to_string(self.vm(slot).join("memory.current")).ok()?.trim().parse().ok()
     }
 
+    /// What the VM holds that the node cannot take back: its charge less
+    /// the host's page cache (`in_use`).
+    pub fn memory_in_use(&self, slot: u32) -> Option<u64> {
+        let cg = self.vm(slot);
+        let current = std::fs::read_to_string(cg.join("memory.current")).ok()?;
+        in_use(&current, &std::fs::read_to_string(cg.join("memory.stat")).ok()?)
+    }
+
     /// Every VM cgroup present, by slot (an engine restarting finds them).
     /// The processes in a VM's cgroup.
     pub fn procs(&self, slot: u32) -> Vec<u32> {
@@ -119,6 +127,18 @@ impl Subtree {
             .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_prefix("vm-")).and_then(|s| s.parse().ok()))
             .collect()
     }
+}
+
+/// A VM's charge (`memory.current`) less its page cache (`memory.stat`'s
+/// `file`). The guest's memory is the VMM's anonymous memory; the file
+/// pages are the host's cache of the VM's disks (and the VMM's own
+/// libraries), which the host reclaims when it needs the room and which
+/// the guest caches again itself. Measured on a 6 GiB computer that wrote
+/// and read 2 GiB: a charge of 4.3 GiB, 2.0 GiB of it file pages.
+fn in_use(current: &str, stat: &str) -> Option<u64> {
+    let current: u64 = current.trim().parse().ok()?;
+    let file: u64 = stat.lines().find_map(|l| l.strip_prefix("file "))?.trim().parse().ok()?;
+    Some(current.saturating_sub(file))
 }
 
 /// A period's quota for a share of CPU in thousandths, at least the
@@ -139,5 +159,16 @@ mod tests {
         assert_eq!(super::cpu_max(63), "6300 100000", "lite: 1/16 vCPU");
         assert_eq!(super::cpu_max(2000), "200000 100000");
         assert_eq!(super::cpu_max(1), "1000 100000", "a floor the kernel accepts");
+    }
+
+    // Goal: in use is the charge less the page cache, by memory.stat's
+    // `file` line alone (not `file_mapped`, `file_dirty`, ...).
+    #[test]
+    fn in_use() {
+        let stat = "anon 2390753280\nfile_mapped 4096\nfile 2162163712\nfile_dirty 0\nkernel 30097408\n";
+        assert_eq!(super::in_use("4582080512\n", stat), Some(4582080512 - 2162163712));
+        assert_eq!(super::in_use("100\n", "file 200\n"), Some(0), "never below zero");
+        assert_eq!(super::in_use("100\n", "anon 100\n"), None, "no file line");
+        assert_eq!(super::in_use("max\n", stat), None);
     }
 }
