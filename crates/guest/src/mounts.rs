@@ -106,6 +106,12 @@ pub fn build_target() -> Mount {
     m(disks::TARGET, TARGET, "ext4", Flags::default(), None)
 }
 
+/// cgroup2 in the init's namespace, for the memory trim's root
+/// `memory.reclaim`; the workload pivots away from it.
+pub fn cgroup() -> Mount {
+    m("cgroup2", "/sys/fs/cgroup", "cgroup2", NOSUID_NODEV_NOEXEC, None)
+}
+
 /// Inside the entrypoint's mount namespace, before it pivots into the
 /// root: the init's `/dev` (so a PTY the agent opens is the workload's
 /// too) and a fresh sysfs, read-only.

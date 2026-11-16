@@ -137,6 +137,13 @@ fn run(
         super::net::configure(n, mounts::ROOT).map_err(io("configuring the network"))?;
     }
 
+    // The trim's own thread, before the PID namespace below: it never
+    // forks. A guest that cannot mount cgroup2 runs without it.
+    match sys::mount(&mounts::cgroup()) {
+        Ok(()) => super::trim::spawn(),
+        Err(e) => eprintln!("sandcastle-guest: memory trim off: mounting cgroup2: {e}"),
+    }
+
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(io("the runtime"))?;
     let listener = sys::vsock_listen(sandcastle_wire::PORT_AGENT, true).map_err(io("listening for the agent"))?;
     // Every process this thread forks from now on is in the workload's PID

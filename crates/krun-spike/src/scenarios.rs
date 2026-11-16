@@ -27,7 +27,7 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 
 pub fn dispatch(layout: &Layout, args: &[String]) -> Result<Value, Error> {
     let Some(cmd) = args.first() else {
-        return Err(Error::msg("a scenario: boot, fresh-root, exec, port, egress, hermes, hermes-memory, hermes-trace, hermes-snapshot, crash, parity, probe, census, reset, pull"));
+        return Err(Error::msg("a scenario: boot, fresh-root, exec, port, egress, hermes, hermes-memory, memory-return, hermes-trace, hermes-snapshot, crash, parity, probe, census, reset, pull"));
     };
     let n: usize = flag(args, "--n").map(|s| s.parse().unwrap_or(10)).unwrap_or(10);
     let v = match cmd.as_str() {
@@ -51,6 +51,14 @@ pub fn dispatch(layout: &Layout, args: &[String]) -> Result<Value, Error> {
                 "egress" => crate::egress::scenario(layout, &node)?,
                 "hermes" => crate::hermes::scenario(&node, n)?,
                 "hermes-memory" => crate::hermes::memory_scenario(&node)?,
+                "memory-return" => {
+                    let o = crate::memory::Opts {
+                        phases: flag(args, "--phases").unwrap_or("anon,cache").split(',').map(String::from).collect(),
+                        gib: flag(args, "--gib").and_then(|v| v.parse().ok()).unwrap_or(2),
+                        idle_s: flag(args, "--idle").and_then(|v| v.parse().ok()).unwrap_or(120),
+                    };
+                    crate::memory::scenario(&node, &o)?
+                }
                 "hermes-trace" => {
                     let all = |name: &str| -> Vec<&str> {
                         args.iter().enumerate().filter(|(_, a)| *a == name).filter_map(|(i, _)| args.get(i + 1).map(String::as_str)).collect()
