@@ -117,6 +117,45 @@ reaches the platform only through an intercept on that port; one on 80
 alone left it to the name's real host. A platform sets it only on a
 node: Cloudflare's containers take an HTTP host on 80 alone.
 
+### The box's own apps: the engine's `front_door`
+
+On Cloudflare a container reaches its platform's apps at their public
+addresses. A self-hosted box's names (a tailnet's, a LAN's) point at the
+box itself, and the egress refuses those addresses, as it refuses every
+private address and the node's own. The engine's config
+(`engine.json`) names the box's names, and where its front door listens
+for each port of theirs:
+
+```json
+"front_door": {
+  "hosts": ["box.example.org", "*.box.example.org"],
+  "ports": {"443": "127.0.0.1:443"}
+}
+```
+
+A connection by one of these names, on one of these ports, goes as bytes
+to that address. Its TLS is end to end with the box's own certificate,
+so a guest's browser trusts it as it trusts any public site, with no CA
+of the engine's. The guard does not judge that address, since the
+operator named it. Nothing else changes:
+
+- the name is still the rules': with the internet off, or a deny naming
+  it (or the door's address), it is refused, as any name is;
+- every other name, port and address is judged as before: the door
+  dialed by its address, the rest of the tailnet, loopback and the
+  node's own are refused;
+- an intercept of the name comes first, as for any name.
+
+A door has 1 to 16 names (hosts or `*.` globs, never an address or
+`*`) and 1 to 8 ports, each with an address that can be dialed; an
+engine whose config breaks these does not start. The engine reads it at
+start, and VMs it adopts then get the new door.
+
+The front door sees the engine's address (here loopback) as the
+request's source. Whatever the front door trusts that address with, a
+guest gets too: a proxy that trusts loopback should serve guests on an
+address of its own.
+
 ### WebSockets through the engine's proxy
 
 The engine's egress proxy carries the guest's half (`crates/egress`,

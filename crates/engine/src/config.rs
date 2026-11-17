@@ -44,6 +44,12 @@ pub struct EngineConfig {
     /// default; Arch's is `/usr/lib`.
     #[serde(default = "debian_libs")]
     pub system_libs: Vec<PathBuf>,
+    /// The node's front door: its own names, and the address serving each
+    /// port of theirs, which a VM reaches though the guard refuses the
+    /// node's own and private addresses (`sandcastle_egress::rules::FrontDoor`).
+    /// None by default.
+    #[serde(default)]
+    pub front_door: Option<sandcastle_egress::rules::FrontDoor>,
 }
 
 /// Debian's: the multiarch directory, and the interpreter where it lies
@@ -93,6 +99,7 @@ impl EngineConfig {
         if self.memory_mib_max == 0 {
             return Err(ConfigError("memory_mib_max: above 0".into()));
         }
+        self.door()?;
         // The socket path's room: `vms/<slot>/lifecycle.sock` must fit.
         let probe = self.state_dir.join(format!("vms/{}/lifecycle.sock", self.vms_max));
         if probe.as_os_str().len() > sandcastle_vm::config::SOCKET_PATH_BYTES_MAX {
@@ -114,6 +121,14 @@ impl EngineConfig {
             }
         }
         Ok((dirs, files))
+    }
+
+    /// The front door, checked; none when the config names none.
+    pub fn door(&self) -> Result<sandcastle_egress::rules::Door, ConfigError> {
+        match &self.front_door {
+            Some(f) => f.compile().map_err(|e| ConfigError(e.to_string())),
+            None => Ok(Default::default()),
+        }
     }
 
     pub fn socket(&self) -> PathBuf {
@@ -177,6 +192,7 @@ pub(crate) mod tests {
             pull: true,
             seccomp: sandcastle_vm::jail::SeccompMode::Enforce,
             system_libs: debian_libs(),
+            front_door: None,
         }
     }
 
@@ -213,6 +229,34 @@ pub(crate) mod tests {
         v["system_libs"] = serde_json::json!(["/usr/lib"]);
         let c: EngineConfig = serde_json::from_value(v).unwrap();
         assert_eq!(c.system_libs, vec![PathBuf::from("/usr/lib")]);
+    }
+
+    // Goal: a config with no front door has none, as every config before
+    // it; one names it as an operator writes it (a port's number a JSON
+    // key); a misspelt field, a port that is no number, or a door that
+    // fails its checks refuses the config at start.
+    #[test]
+    fn front_door() {
+        let v = serde_json::to_value(config()).unwrap();
+        let mut old = v.clone();
+        old.as_object_mut().unwrap().remove("front_door");
+        let c: EngineConfig = serde_json::from_value(old).unwrap();
+        assert_eq!(c.front_door, None);
+        c.validate().unwrap();
+        let with = |door: serde_json::Value| {
+            let mut v = v.clone();
+            v["front_door"] = door;
+            serde_json::from_value::<EngineConfig>(v)
+        };
+        let c = with(serde_json::json!({"hosts": ["box.example.org", "*.box.example.org"], "ports": {"443": "127.0.0.1:8791"}})).unwrap();
+        c.validate().unwrap();
+        let door = c.front_door.as_ref().unwrap();
+        assert_eq!((door.hosts.len(), door.ports.get(&443).copied()), (2, Some("127.0.0.1:8791".parse().unwrap())));
+        assert!(with(serde_json::json!({"host": ["box.example.org"], "ports": {"443": "127.0.0.1:8791"}})).is_err());
+        assert!(with(serde_json::json!({"hosts": ["box.example.org"], "ports": {"https": "127.0.0.1:8791"}})).is_err());
+        assert!(with(serde_json::json!({"hosts": ["box.example.org"], "ports": {"443": "127.0.0.1"}})).is_err());
+        let star = with(serde_json::json!({"hosts": ["*"], "ports": {"443": "127.0.0.1:8791"}})).unwrap();
+        assert!(star.validate().unwrap_err().0.contains("front_door"));
     }
 
     // Goal: each system path is sorted by what the host has there, a link

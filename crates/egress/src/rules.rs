@@ -8,9 +8,12 @@
 //! own (`name:port`, `*.glob:port`: a platform on a plain-HTTP port, a
 //! local stack's), are sandcastle's own, beyond Cloudflare's. Whatever
 //! the rules say, a private address and the node's own are refused unless
-//! a range allows them by name.
+//! a range allows them by name, or the node's front door serves the name
+//! (`FrontDoor`, the operator's, also sandcastle's own).
 
-use std::net::IpAddr;
+use std::collections::BTreeMap;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -25,6 +28,9 @@ pub const HOST_BYTES_MAX: usize = 253;
 pub const PLACEHOLDERS_MAX: usize = 16;
 pub const PLACEHOLDER_BYTES_MIN: usize = 8;
 pub const VALUE_BYTES_MAX: usize = 8 * 1024;
+/// A front door's names and ports.
+pub const FRONT_DOOR_HOSTS_MAX: usize = 16;
+pub const FRONT_DOOR_PORTS_MAX: usize = 8;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Placeholder {
@@ -184,6 +190,62 @@ pub enum RuleError {
     Placeholder(&'static str),
     #[error("intercepts: {0}")]
     Intercepts(String),
+    #[error("front_door: {0}")]
+    FrontDoor(String),
+}
+
+/// The node's front door (sandcastle's own, the operator's): the names the
+/// node's own platform and its apps answer on, and the address that serves
+/// each of their ports. On Cloudflare a container reaches its platform's
+/// apps at their public addresses; a self-hosted node's names point at the
+/// node itself (its tailnet's or its LAN's address, or loopback), which the
+/// guard refuses. A connection by one of these names, on one of these
+/// ports, goes as bytes to the front door's address, its TLS end to end
+/// with the node's own certificate. The guard does not judge that address,
+/// since the operator named it; whether the name may be reached at all is
+/// still the rules' (the internet, allow and deny), as for any name, and
+/// every other name, port and address is judged as it was.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct FrontDoor {
+    /// Hosts or `*.` globs: `box.example.org`, `*.box.example.org`.
+    pub hosts: Vec<String>,
+    /// A port the names are dialed on, and the address serving it:
+    /// `{"443": "127.0.0.1:443"}`.
+    pub ports: BTreeMap<u16, SocketAddr>,
+}
+
+/// A front door, parsed and checked; none by default.
+#[derive(Clone, Debug, Default)]
+pub struct Door {
+    hosts: Vec<Glob>,
+    ports: BTreeMap<u16, SocketAddr>,
+}
+
+impl FrontDoor {
+    pub fn compile(&self) -> Result<Door, RuleError> {
+        let bad = |m: String| RuleError::FrontDoor(m);
+        if self.hosts.is_empty() || self.hosts.len() > FRONT_DOOR_HOSTS_MAX {
+            return Err(bad(format!("1 to {FRONT_DOOR_HOSTS_MAX} hosts")));
+        }
+        if self.ports.is_empty() || self.ports.len() > FRONT_DOOR_PORTS_MAX {
+            return Err(bad(format!("1 to {FRONT_DOOR_PORTS_MAX} ports")));
+        }
+        let mut hosts = Vec::with_capacity(self.hosts.len());
+        for h in &self.hosts {
+            // A name, never an address: the door is found by the name the
+            // guest looked up.
+            let glob = (h.parse::<IpAddr>().is_err()).then(|| Glob::parse(h)).flatten();
+            hosts.push(glob.ok_or_else(|| bad(format!("not a host or a *. glob: {h:.80}")))?);
+        }
+        for (port, to) in &self.ports {
+            let ip = to.ip();
+            if *port == 0 || to.port() == 0 || ip.is_unspecified() || ip.is_multicast() || ip == IpAddr::from([255, 255, 255, 255]) {
+                return Err(bad(format!("{port}: {to} is not a port and an address to dial")));
+            }
+        }
+        Ok(Door { hosts, ports: self.ports.clone() })
+    }
 }
 
 /// A host pattern: exact, or `*.suffix` for any name below the suffix.
@@ -322,6 +384,7 @@ pub struct Compiled {
     deny: Vec<Pattern>,
     intercept: Vec<(Target, u16, Action)>,
     node_addrs: Vec<IpAddr>,
+    door: Arc<Door>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -364,7 +427,7 @@ impl Policy {
             }
             intercept.push((t, port, i.action.clone()));
         }
-        Ok(Compiled { internet: self.internet, allow, deny, intercept, node_addrs: node_addrs.to_vec() })
+        Ok(Compiled { internet: self.internet, allow, deny, intercept, node_addrs: node_addrs.to_vec(), door: Arc::default() })
     }
 }
 
@@ -447,6 +510,23 @@ impl Compiled {
 }
 
 impl Compiled {
+    /// The rules with the node's front door.
+    pub fn with_front_door(mut self, door: Arc<Door>) -> Compiled {
+        self.door = door;
+        self
+    }
+
+    /// Where a connection by `host` on `port` goes when the node's front
+    /// door serves them: its address (refused only when a deny names it),
+    /// or nothing, and the name is resolved as any other.
+    pub fn front_door(&self, host: &str, port: u16) -> Option<Result<SocketAddr, &'static str>> {
+        let to = *self.door.ports.get(&port)?;
+        if !self.door.hosts.iter().any(|g| g.matches(host)) {
+            return None;
+        }
+        Some(if self.deny.iter().any(|p| p.matches(Some(to.ip()), to.port(), None)) { Err("denied") } else { Ok(to) })
+    }
+
     /// Whether a real address a name resolved to may be dialed: not the
     /// node's, not denied, and public unless a range allows it.
     pub fn reachable(&self, ip: IpAddr, port: u16) -> bool {
@@ -711,5 +791,83 @@ mod tests {
         assert_eq!(off.addr(ip("93.184.215.14"), 443, Some("api.example.net")), AddrDecision::Splice);
         assert_eq!(off.addr(ip("10.9.1.1"), 5432, None), AddrDecision::Splice, "a range allows a private address by name");
         assert_eq!(off.addr(ip("10.8.1.1"), 5432, None), AddrDecision::Refuse("not a public address"));
+    }
+
+    fn door(hosts: &[&str], ports: &[(u16, &str)]) -> FrontDoor {
+        FrontDoor { hosts: hosts.iter().map(|h| h.to_string()).collect(), ports: ports.iter().map(|(p, a)| (*p, a.parse().unwrap())).collect() }
+    }
+
+    // Goal: the node's front door is reached by the names the operator
+    // gave, on the ports it gave, at its address, though that address is
+    // the node's own, loopback or the tailnet's; the guard still refuses
+    // every address dialed as such and every other name, and the door
+    // opens nothing the rules close (the internet off, a deny).
+    #[test]
+    fn the_front_door_is_reached_by_its_names_alone() {
+        let tailnet = ip("100.77.1.73");
+        let d = Arc::new(door(&["box.example.org", "*.box.example.org"], &[(443, "127.0.0.1:8791"), (80, "100.77.1.73:80")]).compile().unwrap());
+        let on = Policy { internet: true, ..Policy::default() }.compile(&[tailnet, ip("127.0.0.1")]).unwrap().with_front_door(d.clone());
+        let at = |a: &str| Some(Ok(a.parse::<SocketAddr>().unwrap()));
+        assert_eq!(on.front_door("box.example.org", 443), at("127.0.0.1:8791"));
+        assert_eq!(on.front_door("todo--k2.box.example.org", 443), at("127.0.0.1:8791"));
+        assert_eq!(on.front_door("Todo--K2.Box.Example.org.", 443), at("127.0.0.1:8791"));
+        assert_eq!(on.front_door("a.b.box.example.org", 80), at("100.77.1.73:80"));
+        // not its name, not its port: nothing, so the name resolves as any
+        for (h, port) in [("notbox.example.org", 443), ("example.org", 443), ("box.example.org.evil", 443), ("box.example.org", 22), ("a.box.example.org", 8443)] {
+            assert_eq!(on.front_door(h, port), None, "{h}:{port}");
+        }
+        // the guard as before: the door's address dialed as an address,
+        // the rest of the tailnet, loopback, the node's own
+        assert!(!on.reachable(ip("127.0.0.1"), 8791) && !on.reachable(tailnet, 443) && !on.reachable(ip("100.64.0.9"), 443));
+        assert_eq!(on.addr(tailnet, 80, None), AddrDecision::Refuse("the node's own address"));
+        assert_eq!(on.addr(ip("100.101.149.94"), 443, None), AddrDecision::Refuse("not a public address"));
+        assert_eq!(on.addr(ip("192.168.5.2"), 443, None), AddrDecision::Refuse("not a public address"));
+        // by name, the internet on: spliced (to the door, when it resolves)
+        assert_eq!(on.addr(ip("198.18.0.4"), 443, Some("todo--k2.box.example.org")), AddrDecision::Splice);
+        // the internet off: the door opens nothing
+        let off = Policy { internet: false, ..Policy::default() }.compile(&[tailnet]).unwrap().with_front_door(d.clone());
+        assert_eq!(off.name("todo--k2.box.example.org"), NameDecision::Refuse);
+        assert_eq!(off.addr(ip("198.18.0.4"), 443, Some("todo--k2.box.example.org")), AddrDecision::Refuse("the name is not allowed"));
+        // a deny of the name, or of the door's address, holds
+        let denied = Policy { internet: true, deny: vec!["*.box.example.org".into(), "100.77.1.73:80".into()], ..Policy::default() }.compile(&[tailnet]).unwrap().with_front_door(d);
+        assert_eq!(denied.addr(ip("198.18.0.4"), 443, Some("todo--k2.box.example.org")), AddrDecision::Refuse("the name is not allowed"));
+        assert_eq!(denied.front_door("box.example.org", 80), Some(Err("denied")));
+        // no door: nothing
+        assert_eq!(Policy { internet: true, ..Policy::default() }.compile(&[]).unwrap().front_door("box.example.org", 443), None);
+    }
+
+    // Goal: a front door is checked whole: names, never addresses or `*`;
+    // 1 to 16 names and 1 to 8 ports; an address that can be dialed.
+    #[test]
+    fn front_doors_at_their_edges() {
+        door(&["box.example.org"], &[(443, "127.0.0.1:443")]).compile().unwrap();
+        let many: Vec<String> = (0..FRONT_DOOR_HOSTS_MAX).map(|i| format!("h{i}.example.org")).collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
+        door(&many, &[(443, "[::1]:443")]).compile().unwrap();
+        let mut more = many.clone();
+        more.push("one.more.example.org");
+        let ports: Vec<(u16, &str)> = (1..=FRONT_DOOR_PORTS_MAX as u16).map(|p| (p, "10.0.0.1:443")).collect();
+        door(&["a.example"], &ports).compile().unwrap();
+        let mut more_ports = ports.clone();
+        more_ports.push((9999, "10.0.0.1:443"));
+        for bad in [
+            door(&[], &[(443, "127.0.0.1:443")]),
+            door(&more, &[(443, "127.0.0.1:443")]),
+            door(&["box.example.org"], &[]),
+            door(&["a.example"], &more_ports),
+            door(&["*"], &[(443, "127.0.0.1:443")]),
+            door(&["*.*.example.org"], &[(443, "127.0.0.1:443")]),
+            door(&["100.77.1.73"], &[(443, "127.0.0.1:443")]),
+            door(&["::1"], &[(443, "127.0.0.1:443")]),
+            door(&["box example.org"], &[(443, "127.0.0.1:443")]),
+            door(&["box.example.org"], &[(0, "127.0.0.1:443")]),
+            door(&["box.example.org"], &[(443, "127.0.0.1:0")]),
+            door(&["box.example.org"], &[(443, "0.0.0.0:443")]),
+            door(&["box.example.org"], &[(443, "[::]:443")]),
+            door(&["box.example.org"], &[(443, "224.0.0.1:443")]),
+            door(&["box.example.org"], &[(443, "255.255.255.255:443")]),
+        ] {
+            assert!(matches!(bad.compile(), Err(RuleError::FrontDoor(_))), "{bad:?}");
+        }
     }
 }
