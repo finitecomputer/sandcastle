@@ -18,6 +18,8 @@ mod launch;
 #[cfg(target_os = "linux")]
 mod layout;
 #[cfg(target_os = "linux")]
+mod memory;
+#[cfg(target_os = "linux")]
 mod node;
 #[cfg(target_os = "linux")]
 mod parity;

@@ -51,7 +51,7 @@ The goal is an engine that:
 | Intercepted requests | Go to the Durable Object through celld's callback route | Parity: `interceptOutboundHttp` hands a request to a Fetcher |
 | celld | An engine trait in the fork, Docker and this engine behind it; one conformance Worker for both | Snapshots and intercepts are stubs on Docker anyway |
 | Internet off, a name not intercepted | NXDOMAIN at once; Cloudflare lets the lookup time out | Speed; nothing waits on a timeout |
-| Memory | 4 KiB free-page reporting by default, and a reclaim when a VM idles | 604 MiB against 906 for an idle Hermes |
+| Memory | 4 KiB free-page reporting by default, and the guest trims its page cache when it idles (Memory back, below) | 604 MiB against 906 for an idle Hermes |
 | libkrunfw | Shipped as its own library with its source, as Podman and msb do | Nothing to do until we distribute binaries |
 
 ## Acceptance
@@ -655,6 +655,48 @@ s, a start from a snapshot 3 s) with the old engine as with the new
 budget (`memory_mib_max` 32768) holds the 12 GiB start the check
 expects refused. The driver now destroys that start instead of leaving
 it running.
+
+### Memory back, 2026-11-16
+
+A guest hands back what it frees, but not its page cache. The guest now
+trims that cache when it is idle (`crates/guest/src/linux/trim.rs`). The
+idea and constants are smolvm's guest memory trim, rewritten.
+
+- **When:** after 60 s quiet: at most a quarter of a core busy, and no task
+  stalled on memory (PSI).
+- **How:** it reclaims through the root cgroup's `memory.reclaim`, in steps
+  of at most 512 MiB, looking again every 2 s, down to a floor of
+  `MemTotal/32` (192 MiB on 6 GiB).
+- **Stops:** at the first busy or stalled tick. It then waits a whole quiet
+  period before going on.
+- **Off switch:** `sandcastle.memory_trim=off` in the engine's
+  `kernel_args`; `=<seconds>` sets the quiet period.
+- **Balloon:** free-page reporting was already working. The balloon
+  negotiates feature 5 (reporting), and the engine's kernel line sets order
+  0.
+
+`memory-return` (the spike's driver) measures it. A computer (2 vCPUs,
+6 GiB, a data disk) on the box (python:3.14-slim) does two things, idling
+after each: it touches and frees 2 GiB, and it reads 2 GiB of files. In MiB
+of host memory in use (the VM cgroup's charge less the host's page cache of
+its disks), on the box's runner, libkrun and libkrunfw (6.12.115):
+
+| | idle | 2 GiB held | after the free, +15 s / +2 min | files read | +60 s | +90 s | +3 min |
+|---|---|---|---|---|---|---|---|
+| guest before | 231 | 2,300 | 321 / 252 | 2,314 | 2,312 | 2,312 | **2,312** |
+| guest after | 231 | 2,302 | 334 / 243 | 2,309 | 2,307 | 461 | **461** |
+| after, `memory_trim=off` | 227 | — | — | 2,295 | 2,281 | 2,281 | 2,281 (2 min) |
+
+- **Busy guest:** a guest that read 2 GiB and then kept a core busy for
+  120 s held its cache throughout (2,313). It trimmed to 437 after 60 s
+  quiet.
+- **Cost:** reading the 2 GiB again took 1.65 s after a trim, against 0.24 s
+  with the cache kept.
+- **Log:** the guest says what it returned on the console: `memory trim:
+  1846 MiB of idle page cache returned`.
+- **Gap:** these were measured on the runner unjailed, in a user unit. The
+  box's engine runs root-owned binaries, and installing a guest there needs
+  sudo. The jail changes the VM's uid and seccomp, not its memory.
 
 ### Debt
 
