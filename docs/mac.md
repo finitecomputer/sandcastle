@@ -209,6 +209,8 @@ EOF
 
 `system_libs` is left out: the default for arm64 is Debian's,
 `/usr/lib/aarch64-linux-gnu` and the loader `/usr/lib/ld-linux-aarch64.so.1`.
+A box whose computers open its own apps adds `front_door` (docs/node.md,
+The box's own apps).
 
 `/etc/systemd/system/sandcastle-engine.service`:
 

@@ -254,12 +254,17 @@ impl Egress {
         }
     }
 
-    /// A real address for `host`, public and not the node's.
+    /// A real address for `host`, public and not the node's; or the node's
+    /// front door, where it serves `host` on `port`.
     async fn resolve(&self, host: &str, port: u16) -> Result<SocketAddr, ProxyError> {
+        let rules = self.rules();
+        if let Some(door) = rules.front_door(host, port) {
+            return door.map_err(|why| ProxyError::Refused(format!("{host}'s front door: {why}")));
+        }
         let addrs = tokio::net::lookup_host((host, port)).await?;
         addrs
             .into_iter()
-            .find(|a| self.rules().reachable(a.ip(), port))
+            .find(|a| rules.reachable(a.ip(), port))
             .ok_or_else(|| ProxyError::Refused(format!("{host} has no public address")))
     }
 
@@ -611,6 +616,83 @@ mod tests {
         assert_eq!(dial(8791).await, None, "another port, the internet off: refused, the connection closed");
         let d = eg.decisions();
         assert!(d.iter().any(|d| d.to == format!("{fake}:8791") && d.decision == "Refuse(\"the internet is off\")"), "{d:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A TLS client that trusts only `ca`, over `s`, asking `GET /` of
+    /// `host`; its answer, or nothing when the connection is refused.
+    async fn get_tls(s: UnixStream, ca: &Ca, host: &str) -> Option<String> {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(ca.cert_der().clone()).unwrap();
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ClientConfig::builder_with_provider(provider).with_safe_default_protocol_versions().unwrap().with_root_certificates(roots).with_no_client_auth();
+        let name = rustls_pki_types::ServerName::try_from(host.to_string()).unwrap();
+        let tls = tokio_rustls::TlsConnector::from(Arc::new(config)).connect(name, s).await.ok()?;
+        let (mut send, conn) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tls)).await.ok()?;
+        tokio::spawn(conn);
+        let req = Request::get("/").header("host", host).body(http_body_util::Empty::<Bytes>::new()).unwrap();
+        let resp = send.send_request(req).await.ok()?;
+        Some(String::from_utf8(resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap())
+    }
+
+    // Goal: a guest reaches the node's own apps by their names, as it
+    // would a public host on Cloudflare: the connection goes as bytes to
+    // the node's front door on loopback (the node's own address too), its
+    // TLS end to end with the front door's certificate, which a client
+    // trusting only the front door's CA (not the node's egress CA)
+    // accepts. A name the operator did not give is refused at loopback,
+    // and so is the front door dialed by its address. Before, every
+    // connection to the node's apps was refused: their names resolve to
+    // the node's own or a private (tailnet) address.
+    #[tokio::test]
+    async fn the_node_front_door_serves_its_names_with_its_own_tls() {
+        let dir = std::env::temp_dir().join(format!("sc-egress-door-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let app = "todo--k2.box.example.org";
+        let box_ca = Ca::generate("the box's own").unwrap();
+        let front = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let front_addr = front.local_addr().unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(box_ca.server_config(app).unwrap());
+        tokio::spawn(async move {
+            while let Ok((s, _)) = front.accept().await {
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let Ok(tls) = acceptor.accept(s).await else { return };
+                    let svc = hyper::service::service_fn(|req: Request<Incoming>| async move {
+                        let host = req.headers().get("host").and_then(|v| v.to_str().ok()).unwrap_or("-").to_string();
+                        Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(format!("the front door for {host}")))))
+                    });
+                    let _ = hyper::server::conn::http1::Builder::new().serve_connection(hyper_util::rt::TokioIo::new(tls), svc).await;
+                });
+            }
+        });
+        let door = crate::rules::FrontDoor { hosts: vec!["box.example.org".into(), "*.box.example.org".into()], ports: [(443, front_addr)].into() };
+        let rules = Policy { internet: true, ..Policy::default() }.compile(&[front_addr.ip()]).unwrap().with_front_door(Arc::new(door.compile().unwrap()));
+        let eg = Arc::new(Egress::new(rules, Arc::new(Ca::generate("the node's egress").unwrap()), "/nonexistent".into(), "c-1".into()));
+        let egress_sock = dir.join("egress.sock");
+        tokio::spawn(eg.clone().serve(UnixListener::bind(&egress_sock).unwrap()));
+        let lookup = |name: &str| {
+            let a = eg.answer(&query(name, dns::TYPE_A)).unwrap();
+            IpAddr::V4(std::net::Ipv4Addr::new(a[a.len() - 4], a[a.len() - 3], a[a.len() - 2], a[a.len() - 1]))
+        };
+        let dial = |ip: IpAddr, port: u16| {
+            let egress_sock = egress_sock.clone();
+            async move {
+                let mut s = UnixStream::connect(&egress_sock).await.unwrap();
+                s.write_all(&Header { kind: Kind::Tcp, ip, port }.encode()).await.unwrap();
+                s
+            }
+        };
+        let fake = lookup(app);
+        assert_eq!(get_tls(dial(fake, 443).await, &box_ca, app).await.as_deref(), Some("the front door for todo--k2.box.example.org"));
+        // a name the operator did not give, at loopback: refused
+        let localhost = lookup("localhost");
+        assert_eq!(get_tls(dial(localhost, 443).await, &box_ca, app).await, None);
+        // the front door by its address: the node's own, refused
+        assert_eq!(get_tls(dial(front_addr.ip(), front_addr.port()).await, &box_ca, app).await, None);
+        let d = eg.decisions();
+        assert!(d.iter().any(|d| d.to == format!("{}:{}", front_addr.ip(), front_addr.port()) && d.decision == "Refuse(\"the node's own address\")"), "{d:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

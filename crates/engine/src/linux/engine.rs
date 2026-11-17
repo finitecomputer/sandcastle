@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sandcastle_egress::ca::Ca;
+use sandcastle_egress::rules::Compiled;
 use sandcastle_egress::{Egress, Policy};
 use sandcastle_rootfs::manifest::{HOST_ARCH, HOST_OS};
 use sandcastle_rootfs::registry::Registry;
@@ -166,6 +167,7 @@ pub struct Engine {
     cgroups: Subtree,
     ca: Arc<Ca>,
     node_addrs: Vec<IpAddr>,
+    door: Arc<sandcastle_egress::rules::Door>,
     boot_disk: PathBuf,
     inner: Mutex<Inner>,
     builds: tokio::sync::Mutex<()>,
@@ -281,12 +283,14 @@ impl Engine {
             std::fs::rename(&part, &boot_disk).map_err(internal("publishing the boot disk"))?;
         }
         let refs = std::fs::read(c.images().join("refs.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let door = Arc::new(c.door().map_err(|e| ApiError::Internal(e.to_string()))?);
         let engine = Engine {
             inner: Mutex::new(Inner { slots: Slots::new(c.vms_max), vms: HashMap::new(), ended: BTreeMap::new(), memory_mib: 0, refs }),
             config,
             cgroups,
             ca: Arc::new(ca),
             node_addrs,
+            door,
             boot_disk,
             builds: tokio::sync::Mutex::new(()),
             sockets: super::ports::NetnsSockets::start().map_err(internal("the sockets thread"))?,
@@ -297,6 +301,14 @@ impl Engine {
 
     pub fn config(&self) -> &EngineConfig {
         &self.config
+    }
+
+    /// A start's egress rules, on this node: its addresses refused, its
+    /// front door reached.
+    fn rules(&self, req: &StartRequest) -> Result<Compiled, ApiError> {
+        let policy = Policy { internet: req.enable_internet, allow: req.allow.clone(), deny: req.deny.clone(), intercept: req.intercepts.clone() };
+        let rules = policy.compile(&self.node_addrs).map_err(|e| ApiError::Invalid(e.to_string()))?;
+        Ok(rules.with_front_door(self.door.clone()))
     }
 
     fn get(&self, name: &str) -> Result<Arc<Vm>, ApiError> {
@@ -853,8 +865,7 @@ impl Engine {
         }
 
         // The egress proxy for this VM, on the node, outside its jail.
-        let policy = Policy { internet: req.enable_internet, allow: req.allow.clone(), deny: req.deny.clone(), intercept: req.intercepts.clone() };
-        let rules = policy.compile(&self.node_addrs).map_err(|e| ApiError::Invalid(e.to_string()))?;
+        let rules = self.rules(&req)?;
         let handler = req.handler.as_deref().and_then(|h| h.strip_prefix("unix:")).unwrap_or("/nonexistent").into();
         let egress = Arc::new(Egress::new(rules, self.ca.clone(), handler, name.to_string()));
         let sock = run_dir.join(EGRESS_SOCK);
@@ -1090,8 +1101,7 @@ impl Engine {
         }
         let run_dir = self.config.run_dir(rec.slot);
         let req = &rec.request;
-        let policy = Policy { internet: req.enable_internet, allow: req.allow.clone(), deny: req.deny.clone(), intercept: req.intercepts.clone() };
-        let rules = policy.compile(&self.node_addrs).map_err(|e| ApiError::Invalid(e.to_string()))?;
+        let rules = self.rules(req)?;
         let handler = req.handler.as_deref().and_then(|h| h.strip_prefix("unix:")).unwrap_or("/nonexistent").into();
         let egress = Arc::new(Egress::new(rules, self.ca.clone(), handler, rec.name.clone()));
         let sock = run_dir.join(EGRESS_SOCK);
@@ -1249,8 +1259,7 @@ impl Engine {
         let mut req = record.request.clone();
         req.intercepts = intercepts;
         req.validate()?;
-        let policy = Policy { internet: req.enable_internet, allow: req.allow.clone(), deny: req.deny.clone(), intercept: req.intercepts.clone() };
-        let rules = policy.compile(&self.node_addrs).map_err(|e| ApiError::Invalid(e.to_string()))?;
+        let rules = self.rules(&req)?;
         vm.egress.set_rules(rules);
         record.request = req;
         write_atomic(&self.config.record(vm.slot), &serde_json::to_vec_pretty(&*record).expect("serializes")).map_err(internal("a VM's record"))?;
