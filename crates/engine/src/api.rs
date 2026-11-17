@@ -292,6 +292,12 @@ pub struct Info {
     /// the room. A node that admits by memory counts this.
     #[serde(default)]
     pub memory_in_use_bytes: Option<u64>,
+    /// The CPU time the VM has used since it started, in microseconds: its
+    /// cgroup's `cpu.stat` `usage_usec`, the VMM's threads whole (the
+    /// guest's vCPUs and its device I/O). It only grows over a run; a node
+    /// tells whether a VM is at work from two readings' difference.
+    #[serde(default)]
+    pub cpu_usage_usec: Option<u64>,
 }
 
 /// How a container's run ended: `monitor()`'s answer.
