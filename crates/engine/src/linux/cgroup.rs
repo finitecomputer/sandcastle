@@ -107,6 +107,14 @@ impl Subtree {
         std::fs::read_to_string(self.vm(slot).join("memory.current")).ok()?.trim().parse().ok()
     }
 
+    /// What the VM holds that the node cannot take back: its charge less
+    /// the host's page cache (`in_use`).
+    pub fn memory_in_use(&self, slot: u32) -> Option<u64> {
+        let cg = self.vm(slot);
+        let current = std::fs::read_to_string(cg.join("memory.current")).ok()?;
+        in_use(&current, &std::fs::read_to_string(cg.join("memory.stat")).ok()?)
+    }
+
     /// Every VM cgroup present, by slot (an engine restarting finds them).
     /// The processes in a VM's cgroup.
     pub fn procs(&self, slot: u32) -> Vec<u32> {
@@ -119,6 +127,26 @@ impl Subtree {
             .filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_prefix("vm-")).and_then(|s| s.parse().ok()))
             .collect()
     }
+}
+
+/// A VM's charge (`memory.current`) less its page cache (`memory.stat`'s
+/// `file`), and never less than what one `memory.stat` read says it holds
+/// that the host can't reclaim: anonymous, shared and kernel memory. The
+/// guest's memory is the VMM's anonymous memory; the file pages are the
+/// host's cache of the VM's disks (and the VMM's own libraries), which the
+/// host reclaims when it needs the room and which the guest caches again
+/// itself. Measured on a 6 GiB computer that wrote and read 2 GiB: a charge
+/// of 4.3 GiB, 2.0 GiB of it file pages.
+///
+/// The bound is needed because the two files are two reads: cache the host
+/// adds between them is subtracted from a charge read before it, which can
+/// report a VM holding 700 MiB as 100 MiB, or as nothing.
+fn in_use(current: &str, stat: &str) -> Option<u64> {
+    let current: u64 = current.trim().parse().ok()?;
+    let line = |key: &str| stat.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix(' ')?.trim().parse::<u64>().ok());
+    let file = line("file")?;
+    let held = line("anon")?.saturating_add(line("shmem").unwrap_or(0)).saturating_add(line("kernel").unwrap_or(0));
+    Some(current.saturating_sub(file).max(held))
 }
 
 /// A period's quota for a share of CPU in thousandths, at least the
@@ -139,5 +167,33 @@ mod tests {
         assert_eq!(super::cpu_max(63), "6300 100000", "lite: 1/16 vCPU");
         assert_eq!(super::cpu_max(2000), "200000 100000");
         assert_eq!(super::cpu_max(1), "1000 100000", "a floor the kernel accepts");
+    }
+
+    // Goal: in use is the charge less the page cache, by memory.stat's
+    // `file` line alone (not `file_mapped`, `file_dirty`, ...), and never
+    // below the anonymous, shared and kernel memory of the same read.
+    #[test]
+    fn in_use() {
+        let stat = "anon 2390753280\nfile_mapped 4096\nfile 2162163712\nfile_dirty 0\nkernel 30097408\n";
+        assert_eq!(super::in_use("4582080512\n", stat), Some(2390753280 + 30097408), "a charge read a moment apart: the larger");
+        assert_eq!(super::in_use("5000000000\n", stat), Some(5000000000 - 2162163712));
+        assert_eq!(super::in_use("100\n", "anon 0\nfile 200\n"), Some(0), "never below zero");
+        assert_eq!(super::in_use("100\n", "anon 100\n"), None, "no file line");
+        assert_eq!(super::in_use("100\n", "file 100\n"), None, "no anon line");
+        assert_eq!(super::in_use("100\n", "anon 50\nfile 10\nshmem 70\n"), Some(120), "shared memory is held too");
+        assert_eq!(super::in_use("max\n", stat), None);
+    }
+
+    // Goal: page cache that grows between the two reads never hides the
+    // guest's own memory. Invalid: the charge is read at 800 MiB, then the
+    // host caches 600 MiB more of the VM's disk before memory.stat is read
+    // (anon 700 MiB, file 700 MiB). The 700 MiB the guest holds throughout
+    // is still counted, not 800 - 700 = 100 MiB.
+    #[test]
+    fn cache_grown_between_reads_hides_nothing() {
+        const MIB: u64 = 1 << 20;
+        let stat = format!("anon {}\nfile {}\nkernel 0\nshmem 0\n", 700 * MIB, 700 * MIB);
+        let got = super::in_use(&format!("{}\n", 800 * MIB), &stat).expect("a number");
+        assert!(got >= 700 * MIB, "reported {} MiB", got / MIB);
     }
 }

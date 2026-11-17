@@ -523,6 +523,7 @@ async fn start_container(shared: &Arc<Shared>, name: &str, start: StartRequest) 
         exit: None,
         started_at_ms: now_ms(),
         memory_bytes: None,
+        memory_in_use_bytes: None,
     };
     let (exit, _) = watch::channel(None);
     let container = Container {
