@@ -81,15 +81,26 @@ impl Ca {
         &self.cert_der
     }
 
+    /// A leaf for `host`, and its key. It names its issuer's key (the
+    /// Authority Key Identifier, the CA's Subject Key Identifier): strict
+    /// verifiers refuse a leaf without one, Python 3.13 and later by
+    /// default (`VERIFY_X509_STRICT`), so a guest's `urllib` or `requests`
+    /// failed every intercepted call.
+    fn leaf(&self, host: &str) -> Result<(rcgen::Certificate, KeyPair), CaError> {
+        let mut params = CertificateParams::new(vec![host.to_string()])?;
+        params.distinguished_name.push(DnType::CommonName, host);
+        params.use_authority_key_identifier_extension = true;
+        let key = KeyPair::generate()?;
+        let leaf = params.signed_by(&key, &self.issuer)?;
+        Ok((leaf, key))
+    }
+
     /// The TLS configuration that presents `host` to the guest.
     pub fn server_config(&self, host: &str) -> Result<Arc<ServerConfig>, CaError> {
         if let Some(c) = self.leaves.lock().expect("never poisoned").get(host) {
             return Ok(c.clone());
         }
-        let mut params = CertificateParams::new(vec![host.to_string()])?;
-        params.distinguished_name.push(DnType::CommonName, host);
-        let key = KeyPair::generate()?;
-        let leaf = params.signed_by(&key, &self.issuer)?;
+        let (leaf, key) = self.leaf(host)?;
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let mut config = ServerConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()?
@@ -134,6 +145,44 @@ mod tests {
         let name = rustls_pki_types::ServerName::try_from("z.example").unwrap();
         verifier.verify_server_cert(leaf.der(), &[], &name, &[], rustls_pki_types::UnixTime::now()).unwrap();
         assert!(Ca::load("node CA", "not a pem", ca.key_pem()).is_err());
+    }
+
+    /// The value of extension `oid` (its last two arcs under 2.5.29) in
+    /// a certificate's DER, with the short lengths these certificates use.
+    fn extension(der: &[u8], arc: u8) -> Option<&[u8]> {
+        let oid = [0x06, 0x03, 0x55, 0x1d, arc];
+        let at = der.windows(oid.len()).position(|w| w == oid)? + oid.len();
+        let mut rest = &der[at..];
+        if rest.starts_with(&[0x01, 0x01]) {
+            rest = &rest[3..]; // `critical`
+        }
+        let (tag, len) = (rest[0], rest[1] as usize);
+        assert!(tag == 0x04 && len < 0x80, "an OCTET STRING with a short length");
+        Some(&rest[2..2 + len])
+    }
+
+    /// A key identifier inside an extension's value: the Subject Key
+    /// Identifier's OCTET STRING, or the Authority Key Identifier's
+    /// `[0] keyIdentifier` in its SEQUENCE.
+    fn key_id(value: &[u8], tag: u8) -> &[u8] {
+        let inner = if tag == 0x80 { &value[2..] } else { value };
+        assert_eq!(inner[0], tag);
+        &inner[2..2 + inner[1] as usize]
+    }
+
+    // Goal: every leaf names the CA's key, for a CA made here and for one
+    // loaded from disk, so strict verifiers (Python 3.13+) accept it.
+    #[test]
+    fn leaf_names_its_authority() {
+        let made = Ca::generate("sandcastle engine CA").unwrap();
+        let loaded = Ca::load("sandcastle engine CA", made.cert_pem(), made.key_pem()).unwrap();
+        for ca in [&made, &loaded] {
+            let ski = key_id(extension(ca.cert_der(), 0x0e).expect("the CA has a Subject Key Identifier"), 0x04);
+            let (leaf, _) = ca.leaf("model.example.com").unwrap();
+            let aki = extension(leaf.der(), 0x23).expect("the leaf has an Authority Key Identifier");
+            assert_eq!(key_id(aki, 0x80), ski);
+            assert_eq!(ski.len(), 20);
+        }
     }
 
     // Goal: a leaf the CA mints verifies against the CA alone.
