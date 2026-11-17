@@ -130,15 +130,23 @@ impl Subtree {
 }
 
 /// A VM's charge (`memory.current`) less its page cache (`memory.stat`'s
-/// `file`). The guest's memory is the VMM's anonymous memory; the file
-/// pages are the host's cache of the VM's disks (and the VMM's own
-/// libraries), which the host reclaims when it needs the room and which
-/// the guest caches again itself. Measured on a 6 GiB computer that wrote
-/// and read 2 GiB: a charge of 4.3 GiB, 2.0 GiB of it file pages.
+/// `file`), and never less than what one `memory.stat` read says it holds
+/// that the host can't reclaim: anonymous, shared and kernel memory. The
+/// guest's memory is the VMM's anonymous memory; the file pages are the
+/// host's cache of the VM's disks (and the VMM's own libraries), which the
+/// host reclaims when it needs the room and which the guest caches again
+/// itself. Measured on a 6 GiB computer that wrote and read 2 GiB: a charge
+/// of 4.3 GiB, 2.0 GiB of it file pages.
+///
+/// The bound is needed because the two files are two reads: cache the host
+/// adds between them is subtracted from a charge read before it, which can
+/// report a VM holding 700 MiB as 100 MiB, or as nothing.
 fn in_use(current: &str, stat: &str) -> Option<u64> {
     let current: u64 = current.trim().parse().ok()?;
-    let file: u64 = stat.lines().find_map(|l| l.strip_prefix("file "))?.trim().parse().ok()?;
-    Some(current.saturating_sub(file))
+    let line = |key: &str| stat.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix(' ')?.trim().parse::<u64>().ok());
+    let file = line("file")?;
+    let held = line("anon")?.saturating_add(line("shmem").unwrap_or(0)).saturating_add(line("kernel").unwrap_or(0));
+    Some(current.saturating_sub(file).max(held))
 }
 
 /// A period's quota for a share of CPU in thousandths, at least the
@@ -162,13 +170,30 @@ mod tests {
     }
 
     // Goal: in use is the charge less the page cache, by memory.stat's
-    // `file` line alone (not `file_mapped`, `file_dirty`, ...).
+    // `file` line alone (not `file_mapped`, `file_dirty`, ...), and never
+    // below the anonymous, shared and kernel memory of the same read.
     #[test]
     fn in_use() {
         let stat = "anon 2390753280\nfile_mapped 4096\nfile 2162163712\nfile_dirty 0\nkernel 30097408\n";
-        assert_eq!(super::in_use("4582080512\n", stat), Some(4582080512 - 2162163712));
-        assert_eq!(super::in_use("100\n", "file 200\n"), Some(0), "never below zero");
+        assert_eq!(super::in_use("4582080512\n", stat), Some(2390753280 + 30097408), "a charge read a moment apart: the larger");
+        assert_eq!(super::in_use("5000000000\n", stat), Some(5000000000 - 2162163712));
+        assert_eq!(super::in_use("100\n", "anon 0\nfile 200\n"), Some(0), "never below zero");
         assert_eq!(super::in_use("100\n", "anon 100\n"), None, "no file line");
+        assert_eq!(super::in_use("100\n", "file 100\n"), None, "no anon line");
+        assert_eq!(super::in_use("100\n", "anon 50\nfile 10\nshmem 70\n"), Some(120), "shared memory is held too");
         assert_eq!(super::in_use("max\n", stat), None);
+    }
+
+    // Goal: page cache that grows between the two reads never hides the
+    // guest's own memory. Invalid: the charge is read at 800 MiB, then the
+    // host caches 600 MiB more of the VM's disk before memory.stat is read
+    // (anon 700 MiB, file 700 MiB). The 700 MiB the guest holds throughout
+    // is still counted, not 800 - 700 = 100 MiB.
+    #[test]
+    fn cache_grown_between_reads_hides_nothing() {
+        const MIB: u64 = 1 << 20;
+        let stat = format!("anon {}\nfile {}\nkernel 0\nshmem 0\n", 700 * MIB, 700 * MIB);
+        let got = super::in_use(&format!("{}\n", 800 * MIB), &stat).expect("a number");
+        assert!(got >= 700 * MIB, "reported {} MiB", got / MIB);
     }
 }
