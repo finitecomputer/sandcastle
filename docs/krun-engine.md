@@ -727,3 +727,8 @@ This list is the engine's ledger: each stays here until it is paid.
   `memoryInUseBytes`. The host's copy of a disk's pages is a second
   cache beside the guest's own; opening the disks with direct I/O would
   drop it, if libkrun's block device offers that.
+- Since 2026-11-17 `inspect()` and the list report `cpuUsageUsec`, the
+  CPU time the VM's cgroup has used since it started (`cpu.stat`'s
+  `usage_usec`: the VMM's threads whole, guest and device I/O). celld
+  differences two readings to tell an idle computer from one at work
+  before it puts one to sleep for memory.

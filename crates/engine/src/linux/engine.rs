@@ -138,6 +138,7 @@ impl Vm {
             started_at_ms: r.started_at_ms,
             memory_bytes: None,
             memory_in_use_bytes: None,
+            cpu_usage_usec: None,
         }
     }
 }
@@ -371,6 +372,7 @@ impl Engine {
         let mut i = vm.info();
         i.memory_bytes = self.cgroups.memory_current(vm.slot);
         i.memory_in_use_bytes = self.cgroups.memory_in_use(vm.slot);
+        i.cpu_usage_usec = self.cgroups.cpu_usage_usec(vm.slot);
         i
     }
 

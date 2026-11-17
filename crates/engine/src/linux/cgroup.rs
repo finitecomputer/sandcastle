@@ -115,6 +115,12 @@ impl Subtree {
         in_use(&current, &std::fs::read_to_string(cg.join("memory.stat")).ok()?)
     }
 
+    /// The CPU time the VM has used since its cgroup was made, in
+    /// microseconds (`cpu.stat`'s `usage_usec`).
+    pub fn cpu_usage_usec(&self, slot: u32) -> Option<u64> {
+        usage_usec(&std::fs::read_to_string(self.vm(slot).join("cpu.stat")).ok()?)
+    }
+
     /// Every VM cgroup present, by slot (an engine restarting finds them).
     /// The processes in a VM's cgroup.
     pub fn procs(&self, slot: u32) -> Vec<u32> {
@@ -147,6 +153,13 @@ fn in_use(current: &str, stat: &str) -> Option<u64> {
     let file = line("file")?;
     let held = line("anon")?.saturating_add(line("shmem").unwrap_or(0)).saturating_add(line("kernel").unwrap_or(0));
     Some(current.saturating_sub(file).max(held))
+}
+
+/// `cpu.stat`'s `usage_usec` line: user and system time together, every
+/// thread of the cgroup. Not `user_usec` alone: a guest's work shows as the
+/// VMM's system time too (KVM runs a vCPU in the kernel).
+fn usage_usec(stat: &str) -> Option<u64> {
+    stat.lines().find_map(|l| l.strip_prefix("usage_usec ")?.trim().parse().ok())
 }
 
 /// A period's quota for a share of CPU in thousandths, at least the
@@ -182,6 +195,17 @@ mod tests {
         assert_eq!(super::in_use("100\n", "file 100\n"), None, "no anon line");
         assert_eq!(super::in_use("100\n", "anon 50\nfile 10\nshmem 70\n"), Some(120), "shared memory is held too");
         assert_eq!(super::in_use("max\n", stat), None);
+    }
+
+    // Goal: CPU used is `usage_usec`, the whole cgroup's time, never a
+    // line that only starts with it; a stat without it gives none.
+    #[test]
+    fn cpu_usage() {
+        let stat = "usage_usec 4060604\nuser_usec 1203000\nsystem_usec 2857604\nnr_periods 0\nnr_throttled 0\nthrottled_usec 0\n";
+        assert_eq!(super::usage_usec(stat), Some(4060604));
+        assert_eq!(super::usage_usec("user_usec 1\nsystem_usec 2\n"), None, "no usage line");
+        assert_eq!(super::usage_usec("usage_usec_x 5\nusage_usec 7\n"), Some(7), "a longer key is another line");
+        assert_eq!(super::usage_usec("usage_usec max\n"), None);
     }
 
     // Goal: page cache that grows between the two reads never hides the
