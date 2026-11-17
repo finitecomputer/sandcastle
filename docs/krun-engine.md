@@ -674,4 +674,11 @@ This list is the engine's ledger: each stays here until it is paid.
   service call.
 - Memory is now reported as the VM's cgroup (730 MiB for an idle Hermes
   after a reclaim), which counts the page cache of its disks; the
-  spike's 604 MiB was the VMM's resident memory alone.
+  spike's 604 MiB was the VMM's resident memory alone. Since 2026-11-16
+  `inspect()` and the list also report `memoryInUseBytes`, the charge
+  less that page cache (`memory.stat`'s `file`): what the node cannot
+  take back. A 6 GiB computer that wrote and read 2 GiB of files was
+  charged 4,370 MiB, 2,062 MiB of it file pages. celld admits by
+  `memoryInUseBytes`. The host's copy of a disk's pages is a second
+  cache beside the guest's own; opening the disks with direct I/O would
+  drop it, if libkrun's block device offers that.
