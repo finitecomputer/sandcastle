@@ -11,8 +11,11 @@
 //! Once the guest has been quiet for the quiet period (little CPU, no task
 //! stalled on memory), this thread reclaims page cache through the root
 //! cgroup's `memory.reclaim`, a bounded step at a time, down to a floor
-//! that keeps what running programs map. Every tick looks again: the first
-//! busy or stalled tick stops the trim, and it waits out a whole quiet
+//! that keeps what running programs map. Every tick looks again, and a tick
+//! a step ran in is passed over rather than judged: the step's own reclaim
+//! stall can't be told apart from a workload's in the guest-wide PSI, so
+//! steps come every other tick and each is judged on a tick of its own.
+//! The first busy or stalled tick stops the trim, and it waits out a whole quiet
 //! period before it starts again, so a workload still reading its files
 //! keeps them. What it frees, free-page reporting hands back (the engine's
 //! `page_reporting.page_reporting_order=0` reports every 4 KiB page).
@@ -36,9 +39,9 @@ pub const QUIET_MAX: Duration = Duration::from_secs(3600);
 /// CPU the guest may use, in cores, beyond this thread's own, and still
 /// count as quiet.
 pub const QUIET_CORES: f64 = 0.25;
-/// Share of a tick some task may spend stalled on memory (PSI `some`),
-/// beyond this thread's own reclaim, and still count as quiet: refaulting
-/// cache a workload needs shows here first.
+/// Share of a tick some task may spend stalled on memory (PSI `some`) and
+/// still count as quiet: refaulting cache a workload needs shows here
+/// first. A tick in which a step ran is not judged by it (`Sample::stepped`).
 pub const STALL_LIMIT: f64 = 0.001;
 /// One reclaim request's bounds. The upper one keeps a step short (clean
 /// page cache frees at gigabytes a second), so the next look comes soon.
@@ -74,9 +77,14 @@ pub fn setting(cmdline: &str) -> Result<Option<Duration>, String> {
 pub struct Sample {
     /// CPU used by everything but this thread, in cores.
     pub busy_cores: f64,
-    /// Share of the tick some task was stalled on memory, but for this
-    /// thread's own reclaim.
+    /// Share of the tick some task was stalled on memory, all of it: this
+    /// thread's own reclaim can't be told apart from a workload's stall in
+    /// the guest-wide PSI, so nothing is subtracted.
     pub stall: f64,
+    /// A step ran during the tick. Its own stall is in `stall`, beside any
+    /// workload's, so the tick neither confirms quiet nor starts a step; the
+    /// next tick, with no step in it, judges the stall in full.
+    pub stepped: bool,
     /// Page cache: `Active(file)` + `Inactive(file)`.
     pub file: u64,
     /// `MemTotal`.
@@ -111,6 +119,12 @@ impl Trimmer {
         self.low_water = self.low_water.min(s.file);
         if !self.armed && s.file >= self.low_water.saturating_add(REARM_GROWTH) {
             self.armed = true;
+        }
+        if s.stepped {
+            if s.busy_cores > QUIET_CORES {
+                self.quiet = 0;
+            }
+            return None;
         }
         if !s.quiet() {
             self.quiet = 0;
@@ -223,8 +237,8 @@ mod probe {
     pub struct Probe {
         clk_tck: f64,
         last: Option<(Instant, u64, u64, f64)>,
-        /// Stall this thread's own reclaim caused since the last sample.
-        own_stall_us: u64,
+        /// A step ran since the last sample.
+        stepped: bool,
     }
 
     fn stall_us() -> Option<u64> {
@@ -246,7 +260,7 @@ mod probe {
         pub fn new() -> Probe {
             // SAFETY: sysconf has no preconditions.
             let tck = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-            Probe { clk_tck: if tck > 0 { tck as f64 } else { 100.0 }, last: None, own_stall_us: 0 }
+            Probe { clk_tck: if tck > 0 { tck as f64 } else { 100.0 }, last: None, stepped: false }
         }
 
         pub fn sample(&mut self) -> Option<Sample> {
@@ -255,12 +269,12 @@ mod probe {
             let stall = stall_us().unwrap_or(0);
             let own = thread_cpu_s();
             let (file, total) = file_and_total(&std::fs::read_to_string("/proc/meminfo").ok()?)?;
-            let own_stall = std::mem::take(&mut self.own_stall_us);
+            let stepped = std::mem::take(&mut self.stepped);
             let (then, busy0, stall0, own0) = self.last.replace((now, busy, stall, own))?;
             let secs = now.duration_since(then).as_secs_f64().max(TICK.as_secs_f64() / 10.0);
             let cpu = busy.saturating_sub(busy0) as f64 / self.clk_tck - (own - own0).max(0.0);
-            let stalled = stall.saturating_sub(stall0).saturating_sub(own_stall);
-            Some(Sample { busy_cores: cpu.max(0.0) / secs, stall: stalled as f64 / (secs * 1e6), file, total })
+            let stalled = stall.saturating_sub(stall0);
+            Some(Sample { busy_cores: cpu.max(0.0) / secs, stall: stalled as f64 / (secs * 1e6), stepped, file, total })
         }
 
         pub fn file(&self) -> Option<u64> {
@@ -269,10 +283,8 @@ mod probe {
 
         /// Asks the kernel to reclaim `bytes`: whether it freed them all.
         pub fn reclaim(&mut self, bytes: u64) -> bool {
-            let before = stall_us().unwrap_or(0);
+            self.stepped = true;
             let r = std::fs::OpenOptions::new().write(true).open(RECLAIM).and_then(|mut f| f.write_all(bytes.to_string().as_bytes()));
-            let after = stall_us().unwrap_or(before);
-            self.own_stall_us = self.own_stall_us.saturating_add(after.saturating_sub(before));
             match r {
                 Ok(()) => true,
                 // EAGAIN: it reclaimed less than asked; the rest is in use.
@@ -296,7 +308,7 @@ mod tests {
     const TOTAL: u64 = 6 * GIB;
 
     fn quiet(file: u64) -> Sample {
-        Sample { busy_cores: 0.02, stall: 0.0, file, total: TOTAL }
+        Sample { busy_cores: 0.02, stall: 0.0, stepped: false, file, total: TOTAL }
     }
 
     fn busy(file: u64) -> Sample {
@@ -306,11 +318,15 @@ mod tests {
     /// A quiet guest that frees what it is asked: the requests.
     fn drive(t: &mut Trimmer, file: &mut u64, ticks: usize) -> Vec<u64> {
         let mut steps = vec![];
+        let mut stepped = false;
         for _ in 0..ticks {
-            if let Some(b) = t.next(&quiet(*file)) {
+            let s = Sample { stepped, ..quiet(*file) };
+            stepped = false;
+            if let Some(b) = t.next(&s) {
                 *file -= b;
                 steps.push(b);
                 t.reclaimed(true, *file);
+                stepped = true;
             }
         }
         steps
@@ -349,7 +365,7 @@ mod tests {
     fn busy_stops_it_at_once() {
         let mut t = Trimmer::new(TICK);
         let mut file = 4 * GIB;
-        assert_eq!(drive(&mut t, &mut file, 2).len(), 2);
+        assert_eq!(drive(&mut t, &mut file, 3).len(), 2, "a step every other tick");
         assert_eq!(t.next(&busy(file)), None);
         let mut t = Trimmer::new(Duration::from_secs(10));
         let mut file = 4 * GIB;
@@ -369,6 +385,25 @@ mod tests {
         assert!(t.next(&quiet(2 * GIB)).is_some());
         assert_eq!(t.next(&Sample { stall: 0.01, ..quiet(2 * GIB) }), None);
         assert_eq!(t.next(&Sample { busy_cores: QUIET_CORES + 0.01, ..quiet(2 * GIB) }), None);
+    }
+
+    // Goal: a tick a step ran in can't tell the step's own stall from a
+    // workload's, so it confirms no quiet and starts no step; nothing is
+    // subtracted, and a workload still stalled on the next tick stops the
+    // trim and starts the quiet period over. Busy work in a step's tick
+    // stops it too.
+    #[test]
+    fn a_steps_tick_never_hides_a_workloads_stall() {
+        let mut t = Trimmer::new(TICK * 2);
+        assert_eq!(t.next(&quiet(4 * GIB)), None);
+        assert!(t.next(&quiet(4 * GIB)).is_some());
+        assert_eq!(t.next(&Sample { stepped: true, stall: 0.05, ..quiet(3 * GIB) }), None, "no step from a step's own tick");
+        assert_eq!(t.next(&Sample { stall: 0.05, ..quiet(3 * GIB) }), None, "the workload is still stalled");
+        assert_eq!(t.next(&quiet(3 * GIB)), None, "a new quiet period first");
+        assert!(t.next(&quiet(3 * GIB)).is_some());
+        assert_eq!(t.next(&Sample { stepped: true, busy_cores: 1.0, ..quiet(2 * GIB) }), None);
+        assert_eq!(t.next(&quiet(2 * GIB)), None, "busy in a step's tick also starts over");
+        assert!(t.next(&quiet(2 * GIB)).is_some());
     }
 
     // Goal: 2 GiB of cache comes down to the floor within a minute of
