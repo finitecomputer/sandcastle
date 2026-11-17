@@ -119,6 +119,11 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Prefixed<S> {
     }
 }
 
+/// Whether two host names are one, as DNS compares them.
+fn same_host(a: &str, b: &str) -> bool {
+    a.trim_end_matches('.').eq_ignore_ascii_case(b.trim_end_matches('.'))
+}
+
 fn text(status: u16, msg: &str) -> Response<Body> {
     let mut r = Response::new(Full::new(Bytes::from(msg.to_string())).map_err(|never| match never {}).boxed());
     *r.status_mut() = hyper::StatusCode::from_u16(status).expect("a valid status");
@@ -250,7 +255,7 @@ impl Egress {
             AddrDecision::Splice => self.splice(s, ip, port, host).await,
             // An address intercept (`ip:port`, a range, HTTP's `*`) matched
             // no name: the address the guest dialed is the host.
-            AddrDecision::Intercept(i) => self.intercept(s, i, host.unwrap_or_else(|| ip.to_string()), port).await,
+            AddrDecision::Intercept(i) => self.intercept(s, i, host, ip, port).await,
         }
     }
 
@@ -279,7 +284,12 @@ impl Egress {
         Ok(())
     }
 
-    async fn intercept(self: Arc<Self>, mut s: UnixStream, i: usize, host: String, port: u16) -> Result<(), ProxyError> {
+    /// An intercepted connection, to the destination the rules checked:
+    /// the name the guest looked up (`host`), or the address it dialed.
+    /// A TLS SNI names the certificate the guest gets, never where its
+    /// requests go: by name, an SNI for another name is refused; by
+    /// address, the requests go to that address.
+    async fn intercept(self: Arc<Self>, mut s: UnixStream, i: usize, host: Option<String>, ip: IpAddr, port: u16) -> Result<(), ProxyError> {
         let mut buf = Vec::new();
         let mut chunk = [0u8; 4096];
         // Bounded by PEEK_BYTES_MAX and PEEK_WAIT.
@@ -297,17 +307,27 @@ impl Egress {
         let stream = Prefixed { prefix: buf, at: 0, inner: s };
         match peeked {
             Peek::Tls(sni) => {
-                let name = sni.unwrap_or_else(|| host.clone());
+                let (name, dialed) = match (host, sni) {
+                    (Some(h), Some(sni)) if !same_host(&h, &sni) => {
+                        self.note(format!("{ip}:{port}"), Some(&h), "Refuse(an SNI for another name than the one looked up)".into());
+                        return Ok(());
+                    }
+                    (Some(h), _) => (h, None),
+                    (None, sni) => (sni.unwrap_or_else(|| ip.to_string()), Some(ip)),
+                };
                 let config = self.ca.server_config(&name).map_err(|e| ProxyError::Refused(e.to_string()))?;
                 let tls = tokio_rustls::TlsAcceptor::from(config).accept(stream).await?;
-                self.serve_http(tls, i, name, true, port).await
+                self.serve_http(tls, i, name, dialed, true, port).await
             }
-            Peek::Http(_) => self.serve_http(stream, i, host, false, port).await,
+            Peek::Http(_) => match host {
+                Some(h) => self.serve_http(stream, i, h, None, false, port).await,
+                None => self.serve_http(stream, i, ip.to_string(), Some(ip), false, port).await,
+            },
             Peek::More | Peek::Other => Ok(()),
         }
     }
 
-    async fn serve_http<S>(self: Arc<Self>, io: S, i: usize, host: String, tls: bool, port: u16) -> Result<(), ProxyError>
+    async fn serve_http<S>(self: Arc<Self>, io: S, i: usize, host: String, dialed: Option<IpAddr>, tls: bool, port: u16) -> Result<(), ProxyError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
@@ -315,7 +335,7 @@ impl Egress {
         let service = hyper::service::service_fn(move |req: Request<Incoming>| {
             let me = me.clone();
             let host = host.clone();
-            async move { Ok::<_, Infallible>(me.request(req, i, &host, tls, port).await) }
+            async move { Ok::<_, Infallible>(me.request(req, i, &host, dialed, tls, port).await) }
         });
         hyper::server::conn::http1::Builder::new()
             .serve_connection(hyper_util::rt::TokioIo::new(io), service)
@@ -324,11 +344,11 @@ impl Egress {
             .map_err(|e| ProxyError::Refused(e.to_string()))
     }
 
-    async fn request(self: Arc<Self>, mut req: Request<Incoming>, i: usize, host: &str, tls: bool, port: u16) -> Response<Body> {
+    async fn request(self: Arc<Self>, mut req: Request<Incoming>, i: usize, host: &str, dialed: Option<IpAddr>, tls: bool, port: u16) -> Response<Body> {
         // A WebSocket's upgrade is taken before the request goes on.
         let guest = ws::asks(req.headers()).then(|| hyper::upgrade::on(&mut req));
         let what = format!("{}://{host}:{port}{}", if tls { "wss" } else { "ws" }, req.uri().path());
-        let resp = self.answer_for(req, i, host, tls, port).await;
+        let resp = self.answer_for(req, i, host, dialed, tls, port).await;
         self.upgrade(resp, guest, what, host)
     }
 
@@ -358,7 +378,7 @@ impl Egress {
         resp
     }
 
-    async fn answer_for(&self, mut req: Request<Incoming>, i: usize, host: &str, tls: bool, port: u16) -> Response<Body> {
+    async fn answer_for(&self, mut req: Request<Incoming>, i: usize, host: &str, dialed: Option<IpAddr>, tls: bool, port: u16) -> Response<Body> {
         match self.rules().action(i).clone() {
             Action::Handler => {
                 // Each replaces whatever the guest sent under its name.
@@ -387,7 +407,7 @@ impl Egress {
                         }
                     }
                 }
-                match self.to_upstream(req, host, tls, port).await {
+                match self.to_upstream(req, host, dialed, tls, port).await {
                     Ok(r) => r,
                     Err(e) => text(502, &format!("{host}: {e}")),
                 }
@@ -405,9 +425,15 @@ impl Egress {
         Ok(resp.map(|b| b.boxed()))
     }
 
-    /// The request to the real host, on the port the guest dialed.
-    async fn to_upstream(&self, req: Request<Incoming>, host: &str, tls: bool, port: u16) -> Result<Response<Body>, String> {
-        let addr = self.resolve(host, port).await.map_err(|e| e.to_string())?;
+    /// The request to the real host, on the port the guest dialed: the
+    /// name's (`resolve`), or the address it dialed, as the rules allow it.
+    /// `host` is the name TLS checks there.
+    async fn to_upstream(&self, req: Request<Incoming>, host: &str, dialed: Option<IpAddr>, tls: bool, port: u16) -> Result<Response<Body>, String> {
+        let addr = match dialed {
+            Some(ip) if self.rules().reachable(ip, port) => SocketAddr::new(ip, port),
+            Some(ip) => return Err(format!("{ip} is not a public address")),
+            None => self.resolve(host, port).await.map_err(|e| e.to_string())?,
+        };
         let tcp = TcpStream::connect(addr).await.map_err(|e| e.to_string())?;
         // A streamed body is many writes, and an upgrade's frames more.
         let _ = tcp.set_nodelay(true);
@@ -686,13 +712,78 @@ mod tests {
         };
         let fake = lookup(app);
         assert_eq!(get_tls(dial(fake, 443).await, &box_ca, app).await.as_deref(), Some("the front door for todo--k2.box.example.org"));
-        // a name the operator did not give, at loopback: refused
+        // a name the operator did not give, at loopback, on the door's own
+        // port: refused (spliced, the door would answer it)
         let localhost = lookup("localhost");
-        assert_eq!(get_tls(dial(localhost, 443).await, &box_ca, app).await, None);
+        assert_eq!(get_tls(dial(localhost, front_addr.port()).await, &box_ca, app).await, None);
         // the front door by its address: the node's own, refused
         assert_eq!(get_tls(dial(front_addr.ip(), front_addr.port()).await, &box_ca, app).await, None);
         let d = eg.decisions();
         assert!(d.iter().any(|d| d.to == format!("{}:{}", front_addr.ip(), front_addr.port()) && d.decision == "Refuse(\"the node's own address\")"), "{d:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A stand-in that counts the connections it takes and closes each.
+    async fn counting() -> (SocketAddr, Arc<AtomicUsize>) {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (addr, n) = (l.local_addr().unwrap(), Arc::new(AtomicUsize::new(0)));
+        let counted = n.clone();
+        tokio::spawn(async move {
+            while let Ok((s, _)) = l.accept().await {
+                counted.fetch_add(1, Ordering::SeqCst);
+                drop(s);
+            }
+        });
+        (addr, n)
+    }
+
+    // Goal: a guest's TLS SNI never moves an intercepted request to
+    // another destination than the rules checked. By name, an SNI for
+    // another name (the node's front door) is refused, so the internet
+    // off and the door's own rules hold; by address, the request goes to
+    // the address dialed, its SNI only the name TLS checks there. Before,
+    // the SNI was where a substitute's request went: the guest chose the
+    // host its placeholders' values went to, the front door included.
+    #[tokio::test]
+    async fn an_sni_never_moves_an_intercept_elsewhere() {
+        let dir = std::env::temp_dir().join(format!("sc-egress-sni-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (door_addr, door) = counting().await;
+        let (up_addr, up) = counting().await;
+        let placeholder = Placeholder { placeholder: "SC_PLACEHOLDER_TEST_0002".into(), value: "sk-test-not-a-secret".into() };
+        let substitute = Action::Substitute { placeholders: vec![placeholder] };
+        let rules = Policy {
+            internet: false,
+            allow: vec!["127.0.0.0/8".into()],
+            intercept: vec![Intercept::https("model.example.com", substitute.clone()), Intercept::http(&up_addr.to_string(), substitute)],
+            ..Policy::default()
+        }
+        .compile(&[])
+        .unwrap()
+        .with_front_door(Arc::new(crate::rules::FrontDoor { hosts: vec!["box.example.org".into()], ports: [(443, door_addr)].into() }.compile().unwrap()));
+        let ca = Arc::new(Ca::generate("the node's egress").unwrap());
+        let eg = Arc::new(Egress::new(rules, ca.clone(), "/nonexistent".into(), "c-1".into()));
+        let egress_sock = dir.join("egress.sock");
+        tokio::spawn(eg.clone().serve(UnixListener::bind(&egress_sock).unwrap()));
+        let dial = |ip: IpAddr, port: u16| {
+            let egress_sock = egress_sock.clone();
+            async move {
+                let mut s = UnixStream::connect(&egress_sock).await.unwrap();
+                s.write_all(&Header { kind: Kind::Tcp, ip, port }.encode()).await.unwrap();
+                s
+            }
+        };
+        // by name: the model's address, the door's name in the SNI
+        let a = eg.answer(&query("model.example.com", dns::TYPE_A)).unwrap();
+        let fake = IpAddr::V4(std::net::Ipv4Addr::new(a[a.len() - 4], a[a.len() - 3], a[a.len() - 2], a[a.len() - 1]));
+        assert_eq!(get_tls(dial(fake, 443).await, &ca, "box.example.org").await, None);
+        let d = eg.decisions();
+        assert!(d.iter().any(|d| d.host.as_deref() == Some("model.example.com") && d.decision.contains("an SNI for another name")), "{d:?}");
+        // by address: the door's name in the SNI, the request to the address
+        let said = get_tls(dial(up_addr.ip(), up_addr.port()).await, &ca, "box.example.org").await;
+        assert!(said.as_deref().is_some_and(|s| s.starts_with("box.example.org: ")), "{said:?}");
+        assert_eq!((door.load(Ordering::SeqCst), up.load(Ordering::SeqCst)), (0, 1), "the door never dialed; the address once");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
