@@ -1,0 +1,8 @@
+# Planted bugs in crates/nitro-attest, one at a time; each must fail a named test (the script restores each file after).
+MUTATION root not pinned: caught by: tests::a_wrong_root_is_refused 
+MUTATION root validity skipped: caught by: tests::certificates_outside_their_validity_are_refused 
+MUTATION leaf key usage skipped: caught by: tests::a_signing_certificate_without_digital_signature_is_refused 
+MUTATION COSE signature ignored: caught by: tests::a_changed_byte_is_refused tests::a_forgery_does_not_use_up_a_nonce tests::a_signature_by_another_key_is_refused 
+MUTATION nonce not used up: caught by: tests::a_nonce_from_before_a_restart_is_refused tests::a_replay_is_refused 
+MUTATION age limit off by one: caught by: tests::stale_and_future_documents_are_refused 
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s

@@ -1,0 +1,4 @@
+$ cargo clippy --offline --locked -p sandcastle-nitro-attest -p sandcastle-nitro-spike --all-targets --all-features -- -D warnings
+    Checking sandcastle-nitro-attest v0.1.0 (crates/nitro-attest)
+    Checking sandcastle-nitro-spike v0.1.0 (crates/nitro-spike)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.19s

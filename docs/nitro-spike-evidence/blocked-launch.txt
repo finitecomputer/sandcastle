@@ -1,0 +1,23 @@
+# The launch, refused by the plan (2026-11-20, us-east-2)
+# Each command, then the CLI's last line. Ids redacted; nothing else changed.
+
+$ aws ec2 run-instances --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.18-arm64 --instance-type m8g.xlarge --enclave-options Enabled=true --key-name <key> --security-group-ids <sg> --iam-instance-profile Name=<profile> --metadata-options HttpTokens=required,HttpEndpoint=enabled --block-device-mappings DeviceName=/dev/xvda,Ebs={VolumeSize=60,VolumeType=gp3,DeleteOnTermination=true} --tag-specifications ...
+An error occurred (InvalidParameterCombination) when calling the RunInstances operation: The specified instance type is not eligible for Free Tier. For a list of Free Tier instance types, run 'describe-instance-types' with the filter 'free-tier-eligible=true'.
+
+$ aws ec2 run-instances --dry-run --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.18-arm64 --instance-type m8g.xlarge --enclave-options Enabled=true --security-group-ids <sg>
+An error occurred (DryRunOperation) when calling the RunInstances operation: Request would have succeeded, but DryRun flag is set.
+
+$ aws ec2 run-instances --dry-run --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.18-arm64 --instance-type m8g.xlarge --security-group-ids <sg>
+An error occurred (DryRunOperation) when calling the RunInstances operation: Request would have succeeded, but DryRun flag is set.
+
+$ aws ec2 run-instances --dry-run --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.18-arm64 --instance-type c7g.xlarge --enclave-options Enabled=true --security-group-ids <sg>
+An error occurred (DryRunOperation) when calling the RunInstances operation: Request would have succeeded, but DryRun flag is set.
+
+$ aws ec2 run-instances --dry-run --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.18-arm64 --instance-type t4g.small --enclave-options Enabled=true --security-group-ids <sg>
+An error occurred (InvalidParameterValue) when calling the RunInstances operation: You cannot enable Nitro Enclaves for "t4g.small" instance types. Specify a supported instance type and try again.
+
+$ aws ec2 describe-instance-types --instance-types m8g.xlarge --query InstanceTypes[0].FreeTierEligible
+False
+
+$ aws freetier get-account-plan-state --query "[accountPlanType, accountPlanStatus, accountPlanRemainingCredits.amount]"
+FREE	ACTIVE	120.0

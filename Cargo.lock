@@ -786,6 +786,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "sandcastle-nitro-attest"
+version = "0.1.0"
+dependencies = [
+ "rcgen",
+ "ring",
+ "rustls-pki-types",
+ "rustls-webpki",
+ "thiserror",
+ "time",
+]
+
+[[package]]
+name = "sandcastle-nitro-spike"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "sandcastle-nitro-attest",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "sandcastle-rootfs"
 version = "0.1.0"
 dependencies = [

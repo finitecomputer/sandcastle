@@ -1,0 +1,5 @@
+$ AWS_PROFILE=<profile> crates/nitro-spike/host/teardown.sh list   # 2026-11-20, before any instance
+security-group <id:fafef0b0>
+key-pair <id:c8890419>
+iam-role <id:ea91eafe>
+iam-instance-profile <id:ea91eafe>
