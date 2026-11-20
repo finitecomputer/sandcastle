@@ -1,0 +1,78 @@
+{
+  "connect_ms": {
+    "max": 457.8,
+    "median": 453.2,
+    "min": 449.1,
+    "n": 10
+  },
+  "first": {
+    "config": {
+      "boot-source": {
+        "boot_args": "panic=1 initcall_blacklist=i8042_init quiet",
+        "initrd_path": "/home/ec2-user/nitro/images/probe.initrd",
+        "kernel_image_path": "/home/ec2-user/nitro/guest-kernel/out/Image"
+      },
+      "drives": [],
+      "enclave": {
+        "cpu_accounting": false,
+        "cpu_overcommit": false,
+        "debug_mode": false,
+        "direct_mode": false,
+        "hotplug_mode": false
+      },
+      "machine-config": {
+        "mem_size_mib": 512,
+        "vcpu_count": 2
+      },
+      "network-interfaces": [],
+      "vsock": {
+        "dmb_size_mib": 16,
+        "guest_cid": 3,
+        "uds_path": "/run/nitro-spike/boot-0/v.sock"
+      }
+    },
+    "hello": {
+      "hello": {
+        "hello_ms": 81,
+        "init_ms": 80,
+        "kernel": "6.18.62+",
+        "nsm": true
+      }
+    },
+    "pool_in_use_mib": 534,
+    "pool_mib_expected": 530,
+    "slots_in_use": "1"
+  },
+  "guest_init_boottime_ms": {
+    "max": 81.0,
+    "median": 80.0,
+    "min": 76.0,
+    "n": 10
+  },
+  "hello_ms": {
+    "max": 458.2,
+    "median": 453.3,
+    "min": 449.2,
+    "n": 10
+  },
+  "samples_connect_ms": [
+    454.615028,
+    453.792189,
+    449.268435,
+    457.757171,
+    457.527795,
+    452.302826,
+    453.453833,
+    449.127162,
+    452.957232,
+    451.586343
+  ],
+  "scenario": "boot",
+  "stop_ms": {
+    "max": 86.4,
+    "median": 82.4,
+    "min": 80.4,
+    "n": 10
+  },
+  "what": "spawning Firecracker to the probe's vsock dial (connect) and hello; the guest's own boot clock when its init began (init); a power-off to Firecracker's exit (stop). All ms."
+}

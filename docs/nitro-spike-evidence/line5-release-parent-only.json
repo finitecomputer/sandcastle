@@ -1,0 +1,6 @@
+{
+  "allowed": false,
+  "caller": "the parent's role, no recipient",
+  "kms": "aws: [ERROR]: An error occurred (AccessDeniedException) when calling the Decrypt operation: User: arn:aws:sts::<project>:assumed-role/nitro-spike-parent/<instance> is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-east-2:<project>:key/<key> because no resource-based policy allows the kms:Decrypt action",
+  "scenario": "release"
+}

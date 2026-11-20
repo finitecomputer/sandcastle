@@ -1,0 +1,24 @@
+2026-11-20T22:44:08.189141466 [anonymous-instance:main] Running Firecracker v1.18.0
+2026-11-20T22:44:08.189308360 [anonymous-instance:main] Enclave NUMA layout: 1 node(s)
+2026-11-20T22:44:08.189317013 [anonymous-instance:main] Building EIF from kernel=/home/ec2-user/nitro/guest-kernel/out/Image initrd=Some("/home/ec2-user/nitro/images/probe.initrd")
+2026-11-20T22:44:08.189321726 [anonymous-instance:main] EIF image: 20138552 bytes
+2026-11-20T22:44:08.189408038 [anonymous-instance:main] Hypervisor supported flags=0x3fc0, required matched=0x0240
+2026-11-20T22:44:08.189631321 [anonymous-instance:main] Enclave VM created: slot=0x1a1fb21a37d451b, direct_mode=false, cpu_overcommit=false, cpu_accounting=false, create_flags=0x240
+2026-11-20T22:44:08.190320908 [anonymous-instance:main] Added 2 vCPUs via NE_ADD_ANY_VCPU across 1 NUMA node(s)
+2026-11-20T22:44:08.191646973 [anonymous-instance:main] Info page installed
+2026-11-20T22:44:08.215803402 [anonymous-instance:main] CMA alloc: gpa=0x40000000 host=0xffff98e00000 size=512 MiB parent_numa=0
+2026-11-20T22:44:08.226924278 [anonymous-instance:main] Allocated 512 MiB, loaded EIF, and donated memory to enclave
+2026-11-20T22:44:08.226936314 [anonymous-instance:main] Attaching enclave vsock device
+2026-11-20T22:44:08.228471510 [anonymous-instance:main] Allocated 16 MiB DMB for Vsock id=vsock
+2026-11-20T22:44:08.229065844 [anonymous-instance:main] NE_ADD_DEVICE: devid=Vsock uid=1 num_vqs=3 config_size=8 shm_regions=1 info_event_vector=0
+2026-11-20T22:44:08.229084145 [anonymous-instance:main] Attached 1 enclave device(s)
+2026-11-20T22:44:08.229086878 [anonymous-instance:main] Starting enclave with start_flags=0x0 (debug=false)
+2026-11-20T22:44:08.242248771 [anonymous-instance:main] Enclave started: slot=0x1a1fb21a37d451b cid=138
+2026-11-20T22:44:08.242286387 [anonymous-instance:main] Enclave boot complete
+2026-11-20T22:44:08.242289861 [anonymous-instance:main] Successfully started microvm that was configured from one single json
+2026-11-20T22:44:08.639735643 [anonymous-instance:main] DRIVER_OK detected for device uid=1, activating
+2026-11-20T22:44:08.639757378 [anonymous-instance:main] Device uid=1 activated successfully
+2026-11-20T22:44:08.645341235 [anonymous-instance:main] info-event fired for already-activated device uid=1
+2026-11-20T22:44:08.703737670 [anonymous-instance:main] Enclave exited (event_set=HANG_UP)
+2026-11-20T22:44:08.703743050 [anonymous-instance:main] Vmm is stopping.
+2026-11-20T22:44:08.723082213 [anonymous-instance:main] Firecracker exiting successfully. exit_code=0

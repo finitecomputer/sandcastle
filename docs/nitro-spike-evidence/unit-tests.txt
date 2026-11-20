@@ -1,40 +1,34 @@
-     Running unittests src/lib.rs (target/debug/deps/sandcastle_nitro_attest-9b56125dfa91ade6)
-test cbor::tests::indefinite_reserved_and_wrong_kinds_refused ... ok
+     Running unittests src/lib.rs (target/debug/deps/sandcastle_nitro_attest-cf20425ada4b8621)
 test cbor::tests::heads_round_trip_at_each_width ... ok
+test cbor::tests::indefinite_maps_and_arrays ... ok
 test cbor::tests::tag_if_leaves_other_items ... ok
+test cbor::tests::indefinite_reserved_and_wrong_kinds_refused ... ok
 test chain::tests::fixed_signatures_become_der ... ok
-test der::tests::times_parse_to_unix_seconds ... ok
-test cbor::tests::truncation_is_a_fault_not_a_read ... ok
-test der::tests::elements_never_read_past_the_end ... ok
-test chain::tests::the_aws_root_is_pinned ... ok
 test der::tests::malformed_times_refused ... ok
+test cbor::tests::truncation_is_a_fault_not_a_read ... ok
+test der::tests::times_parse_to_unix_seconds ... ok
+test chain::tests::the_aws_root_is_pinned ... ok
+test der::tests::elements_never_read_past_the_end ... ok
 test nonce::tests::once_and_only_while_live ... ok
 test nonce::tests::bounded_and_expiry_makes_room ... ok
 test document::tests::envelope_shape_refused ... ok
 test document::tests::a_whole_payload_parses ... ok
-test document::tests::optional_fields_null_or_absent ... ok
 test tests::a_signing_certificate_without_digital_signature_is_refused ... ok
+test document::tests::optional_fields_null_or_absent ... ok
 test tests::a_nonce_from_before_a_restart_is_refused ... ok
+test document::tests::payload_map_of_either_length ... ok
+test tests::a_wrong_root_is_refused ... ok
 test tests::a_replay_is_refused ... ok
 test tests::a_valid_document_verifies ... ok
-test tests::a_cut_document_is_refused ... ok
 test tests::a_signature_by_another_key_is_refused ... ok
-test tests::a_wrong_root_is_refused ... ok
-test tests::certificates_outside_their_validity_are_refused ... ok
-test tests::stale_and_future_documents_are_refused ... ok
+test tests::a_cut_document_is_refused ... ok
 test tests::a_wrong_or_missing_nonce_is_refused ... ok
+test tests::certificates_outside_their_validity_are_refused ... ok
 test tests::a_forgery_does_not_use_up_a_nonce ... ok
+test tests::stale_and_future_documents_are_refused ... ok
 test document::tests::each_field_rule_refuses ... ok
 test tests::a_changed_byte_is_refused ... ok
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
-     Running unittests src/lib.rs (target/debug/deps/sandcastle_nitro_spike-23281689db6c13d9)
-test config::tests::pool_accounting ... ok
-test config::tests::slots_in_steps ... ok
-test config::tests::options_drives_and_eif_render ... ok
-test config::tests::renders_awss_example ... ok
-test config::tests::limits_at_the_edge_and_one_past ... ok
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-     Running unittests src/main.rs (target/debug/deps/sandcastle_nitro_spike-a4103435cacc187f)
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+     Running unittests src/bin/nitro-verify.rs (target/debug/deps/nitro_verify-83a42ebef174fa16)
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

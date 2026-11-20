@@ -1,0 +1,4 @@
+rustc 1.99.0 (b940084d7 2026-09-28)
+6.18.62-127.179.amzn2023.aarch64
+Firecracker v1.18.0
+OpenSSL 3.5.8 25 Aug 2026 (Library: OpenSSL 3.5.8 25 Aug 2026)

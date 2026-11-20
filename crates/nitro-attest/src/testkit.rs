@@ -103,6 +103,9 @@ pub struct Fields {
     pub cabundle: Option<Vec<Vec<u8>>>,
     /// CBOR tag 18 before the envelope.
     pub tagged: bool,
+    /// The payload's map of indefinite length, closed by a break, as the
+    /// real NSM writes it (the NSM API's serde writes a definite one).
+    pub indefinite: bool,
 }
 
 impl Fields {
@@ -119,6 +122,7 @@ impl Fields {
             append: vec![],
             cabundle: None,
             tagged: false,
+            indefinite: true,
         }
     }
 }
@@ -172,10 +176,17 @@ pub fn payload(chain: &Chain, f: &Fields) -> Vec<u8> {
     const ORDER: [&str; 9] = ["module_id", "digest", "timestamp", "pcrs", "certificate", "cabundle", "public_key", "user_data", "nonce"];
     let keys: Vec<&str> = ORDER.iter().copied().filter(|k| !f.omit.contains(k)).chain(f.append.iter().copied()).collect();
     let mut out = Vec::new();
-    write_head(&mut out, 5, keys.len() as u64);
+    if f.indefinite {
+        out.push(0xbf);
+    } else {
+        write_head(&mut out, 5, keys.len() as u64);
+    }
     for k in keys {
         text(&mut out, k);
         value(&mut out, k, chain, f);
+    }
+    if f.indefinite {
+        out.push(0xff);
     }
     out
 }

@@ -1,6 +1,7 @@
 //! A reader for the CBOR an attestation document is made of, and nothing
-//! more: definite lengths only, integers, byte and text strings, arrays,
-//! maps, one tag, and null. It is schema-directed, so the caller says what
+//! more: integers, byte and text strings of definite length, arrays and
+//! maps of definite or indefinite length (the NSM writes its payload's map
+//! as an indefinite one, closed by a break), one tag, and null. It is schema-directed, so the caller says what
 //! comes next and nothing recurses; every string it hands back is a slice
 //! of the input, so no length in the input can make it allocate.
 
@@ -39,8 +40,10 @@ impl Kind {
 pub enum CborFault {
     #[error("the input ends inside an item")]
     Truncated,
-    #[error("an indefinite length, which the NSM never writes")]
+    #[error("an indefinite length where only a map or an array may have one")]
     Indefinite,
+    #[error("a break (0xff) outside an indefinite map or array")]
+    Break,
     #[error("a reserved additional-information value")]
     Reserved,
     #[error("expected {expected:?}, found {found:?}")]
@@ -55,6 +58,18 @@ pub enum CborFault {
 
 /// The null simple value (major 7, 22).
 const NULL: u8 = 0xf6;
+/// An indefinite array's and map's first bytes, and the break that ends
+/// either.
+const ARRAY_INDEFINITE: u8 = 0x9f;
+const MAP_INDEFINITE: u8 = 0xbf;
+const BREAK: u8 = 0xff;
+
+/// A map's or an array's length: a count, or "until the break".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Count {
+    Definite(u64),
+    Indefinite,
+}
 
 pub(crate) struct Reader<'a> {
     input: &'a [u8],
@@ -85,6 +100,7 @@ impl<'a> Reader<'a> {
             25 => 2,
             26 => 4,
             27 => 8,
+            31 if initial == BREAK => return Err(self.fault(start, CborFault::Break)),
             31 => return Err(self.fault(start, CborFault::Indefinite)),
             _ => return Err(self.fault(start, CborFault::Reserved)),
         };
@@ -157,6 +173,35 @@ impl<'a> Reader<'a> {
     /// A map's count of entries. The caller bounds it before it loops.
     pub fn map(&mut self) -> Result<u64, AttestError> {
         self.expect(Kind::Map)
+    }
+
+    fn counted(&mut self, kind: Kind, indefinite: u8) -> Result<Count, AttestError> {
+        if self.input.get(self.at) == Some(&indefinite) {
+            self.at += 1;
+            Ok(Count::Indefinite)
+        } else {
+            self.expect(kind).map(Count::Definite)
+        }
+    }
+
+    /// A map's length, definite or indefinite.
+    pub fn map_count(&mut self) -> Result<Count, AttestError> {
+        self.counted(Kind::Map, MAP_INDEFINITE)
+    }
+
+    /// An array's length, definite or indefinite.
+    pub fn array_count(&mut self) -> Result<Count, AttestError> {
+        self.counted(Kind::Array, ARRAY_INDEFINITE)
+    }
+
+    /// Whether the next byte is a break, consuming it if so.
+    pub fn take_break(&mut self) -> bool {
+        if self.input.get(self.at) == Some(&BREAK) {
+            self.at += 1;
+            true
+        } else {
+            false
+        }
     }
 
     /// Consumes tag `tag` if it comes next; any other item is left.
@@ -253,6 +298,22 @@ mod tests {
             assert!(Reader::new(&full[..cut]).bytes().is_err(), "cut at {cut}");
         }
         assert_eq!(Reader::new(&full).bytes().unwrap().len(), 300);
+    }
+
+    // Goal: maps and arrays take either length; a break ends only an
+    // indefinite one. Method: both forms, and a stray break.
+    #[test]
+    fn indefinite_maps_and_arrays() {
+        let mut r = Reader::new(&[0xbf, 0x00, 0x01, 0xff]);
+        assert_eq!(r.map_count().unwrap(), Count::Indefinite);
+        assert!(!r.take_break());
+        assert_eq!((r.uint().unwrap(), r.uint().unwrap()), (0, 1));
+        assert!(r.take_break());
+        r.finish().unwrap();
+        assert_eq!(Reader::new(&[0x82]).array_count().unwrap(), Count::Definite(2));
+        assert_eq!(Reader::new(&[0x9f]).array_count().unwrap(), Count::Indefinite);
+        assert_eq!(fault(Reader::new(&[0xff]).uint()), (0, CborFault::Break));
+        assert_eq!(fault(Reader::new(&[0xbf]).map()), (0, CborFault::Indefinite), "map() is definite only");
     }
 
     // Goal: what the NSM never writes is refused, never guessed at.

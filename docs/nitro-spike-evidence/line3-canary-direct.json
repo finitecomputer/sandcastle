@@ -1,0 +1,68 @@
+{
+  "answers": [
+    {
+      "done": {
+        "bytes": 67108864
+      }
+    },
+    {
+      "done": {
+        "bytes": 44
+      }
+    },
+    {
+      "done": {
+        "bytes": 1048576
+      }
+    }
+  ],
+  "console_in_firecracker_log": false,
+  "debug": false,
+  "disk_on_parent": {
+    "bytes_read": 67108864,
+    "matches": 409,
+    "place": "the disk's backing file on the parent",
+    "ranges": 1,
+    "unreadable": 0,
+    "zero_bytes": 66060288
+  },
+  "firecracker_mappings_over_half_the_guest": [
+    "512 MiB rw-s /dev/nitro_enclaves"
+  ],
+  "hello": {
+    "hello": {
+      "hello_ms": 86,
+      "init_ms": 86,
+      "kernel": "6.18.62+",
+      "nsm": false
+    }
+  },
+  "memory_in_firecracker": {
+    "bytes_read": 542347264,
+    "matches": 24546,
+    "place": "/proc/<firecracker>/mem, every readable mapping in /proc/<firecracker>/maps",
+    "ranges": 17,
+    "unreadable": 1,
+    "zero_bytes": 415010426
+  },
+  "memory_in_firecrackers_locked_mapping": {
+    "bytes_read": 0,
+    "matches": 0,
+    "place": "/proc/<firecracker>/mem over its no-access /dev/nitro_enclaves mappings",
+    "ranges": 0,
+    "unreadable": 0,
+    "zero_bytes": 0
+  },
+  "memory_in_physical_ram": {
+    "bytes_read": 16928014336,
+    "matches": 24547,
+    "place": "/proc/kcore over every System RAM range of /proc/iomem",
+    "ranges": 6,
+    "unreadable": 0,
+    "zero_bytes": 14734178664
+  },
+  "mode": "direct",
+  "needle": "each canary's text repeated 64 times; the parent itself holds the text once in its command and once in the needle",
+  "scenario": "canary",
+  "stop_ms": 84.42246
+}

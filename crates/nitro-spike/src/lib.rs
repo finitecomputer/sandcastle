@@ -1,7 +1,15 @@
-//! The Nitro spike's driver (docs/nitro-spike.md). So far: Firecracker's
+//! The Nitro spike's driver (docs/nitro-spike.md): Firecracker's
 //! configuration for a Nitro Sandbox and the parent's pool accounting
-//! (`config`), and the operator's check of an attestation document
-//! (`sandcastle-nitro-spike verify`). The launch and timing half comes
-//! with the instance.
+//! (`config`), the probe's initrd (`initrd`), and on the parent (Linux) a
+//! sandbox's life (`run`), what the parent can read (`scan`) and each
+//! acceptance line's scenario (`scenarios`). The operator checks a
+//! document with `sandcastle-nitro-spike verify`.
 
 pub mod config;
+pub mod initrd;
+#[cfg(target_os = "linux")]
+pub mod run;
+#[cfg(target_os = "linux")]
+pub mod scan;
+#[cfg(target_os = "linux")]
+pub mod scenarios;

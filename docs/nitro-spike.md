@@ -213,21 +213,33 @@ this backend loses (memory given back, pause).
 
 | Path | What | Tested where |
 |---|---|---|
-| `crates/nitro-attest` (`sandcastle-nitro-attest`) | The attestation verifier: COSE Sign1 with ES384, the chain to the pinned root, validity, freshness, a single-use nonce. Pure: the caller passes the time and the randomness. Written to become celld's. | Any host: 27 tests on self-made documents |
-| `crates/nitro-spike` (`sandcastle-nitro-spike`) | The driver. So far: Firecracker's configuration for a sandbox and the pool's accounting (`config`), and `verify`, the operator's check of a document. | Any host: 5 tests |
-| `crates/nitro-spike/host/parent-ready.sh` | Line 1: a fresh AL2023 parent to ready, then its facts as JSON | Written, not run |
-| `crates/nitro-spike/host/guest-kernel.sh` | The guest kernel the spike controls (Amazon Linux's 6.18 tree, Firecracker's CI config, NSM, dm-verity) | Written, not run |
+| `crates/nitro-attest` (`sandcastle-nitro-attest`) | The attestation verifier: COSE Sign1 with ES384, the chain to the pinned root, validity, freshness, a single-use nonce. Pure: the caller passes the time and the randomness. Written to become celld's. Its `nitro-verify` binary is the operator's check of a document. | Any host: 29 tests on self-made documents; real documents on the operator's machine (line 4) |
+| `crates/nitro-probe` (`sandcastle-nitro-probe`) | The guest's probe: a static init (aarch64 musl, pure Rust) that says hello over vsock, holds canaries, asks its NSM for documents and opens KMS's CMS envelope; its protocol, the NSM's CBOR and the CMS walk | Any host: 9 tests (the NSM API's own encodings, OpenSSL-made envelopes); on Nitro: lines 2 to 5 |
+| `crates/nitro-spike` (`sandcastle-nitro-spike`) | The driver: Firecracker's configuration and the pool's accounting (`config`), the probe's initrd (`initrd`), and on the parent a sandbox's life (`run`), what the parent can read (`scan`) and each line's scenario (`scenarios`: `boot`, `canary`, `attest`, `release`) | Any host: 7 tests; on Nitro: lines 2 to 5 |
+| `crates/nitro-spike/host/parent-ready.sh` | Line 1: a fresh AL2023 parent to ready, then its facts as JSON | Run (line 1) |
+| `crates/nitro-spike/host/guest-kernel.sh` | The guest kernel the spike controls (Amazon Linux's 6.18 tree, Firecracker's CI config, NSM, dm-verity) | Run: built in about 4 minutes on the parent |
 | `crates/nitro-spike/host/teardown.sh` | Line 12: list or remove everything tagged for the spike | `list` run |
 
 ### Dependencies
 
-None new to the workspace's lock. `ring` 0.17.14 and `rustls-webpki`
-0.103.14 (with `rustls-pki-types` 1.15.1) came in with `rustls`; `rcgen`
-0.14.10 and `time` 0.3.55 (tests only) with the egress crate's CA. They are
-now named in the workspace's dependencies, pinned to the locked versions.
-The CBOR reader and the two facts read from certificates' DER are written
-here (below), not pulled in: the documents' CBOR is a small fixed schema,
-and a general CBOR crate would be three more crates to audit for it.
+- **Already in the lock**, now named in the workspace's dependencies at
+  their locked versions: `ring` 0.17.14 and `rustls-webpki` 0.103.14 (with
+  `rustls-pki-types` 1.15.1), which came with `rustls`; `rcgen` 0.14.10
+  and `time` 0.3.55 (tests only), with the egress crate's CA; `base64`
+  0.23.1 and `memchr` 2.8.3.
+- **New, for the probe alone:** `rsa` 0.9.10, `aes` 0.8.4, `cbc` 0.1.2,
+  and their 21 dependencies (RustCrypto's `der`, `pkcs1`, `pkcs8`, `spki`,
+  `num-bigint-dig`, `cipher`, `rand_core` and the like). KMS encrypts to an
+  RSA key (`RSAES_OAEP_SHA_256` is its only recipient algorithm) and CMS's
+  content is AES-256-CBC, so the guest needs both. All pure Rust, so the
+  probe links static for musl with no C toolchain; `ring` (which has C) is
+  kept out of it. `rsa` 0.9 has a published timing side channel in
+  decryption (RUSTSEC-2023-0071, "Marvin"): the probe opens one envelope
+  per key and then drops the key, so a parent cannot use it as an oracle.
+- **Written here, not pulled in:** the attestation document's CBOR reader,
+  the two facts read from certificates' DER, the NSM's request and answer,
+  and the CMS walk: each a small fixed schema, where a general crate would
+  be more to audit than to write.
 
 ## How the engineering style applies
 
@@ -255,221 +267,280 @@ and a general CBOR crate would be three more crates to audit for it.
 
 ## Results
 
-### Status: blocked before line 1 (2026-11-20), escalated
+### Status (2026-11-20): lines 1 to 5 measured; stopped for review
 
-**The project's plan refuses the parent instance.** Launching an
-enclave-enabled `m8g.xlarge` on the AL2023 6.18 arm64 AMI failed:
+| # | What | Result |
+|---|---|---|
+| 1 | Host | `parent-ready.sh` took a fresh `m8g.xlarge` (AL2023, kernel 6.18.62) to ready in two runs and one reboot: Firecracker v1.18.0, an 8 GiB pool in 16 regions, 3 vCPUs in the CPU pool, 4 of 20 slots |
+| 2 | Boot | Launch to the guest's userspace, 512 MiB: **453 ms confidential, 304 ms direct** (medians of 10, with `quiet`); `cpu_overcommit` adds 2 to 5 ms. Without `quiet`, 1,193 and 1,048 ms: the guest writes its boot log to the serial port. About 60 ms more per GiB of guest memory |
+| 3 | What the parent sees | Guest memory: **found** from the parent in direct mode; **not found** in confidential mode, where the parent reads the sandbox's pages as zeros. A plain block device: found in both. The console: hidden unless in debug mode |
+| 4 | Attestation | Real documents with the caller's nonce, **verified on the operator's machine** down to the pinned AWS root. Same image twice: PCR 0, 1, 2, 5, 6 equal; a changed command line changes 0, 1, 6; debug mode zeroes 0, 1, 2, 5, 6 |
+| 5 | Key release | A key whose policy requires image A's PCR0: **released to image A** and opened only inside it; **denied** to image B, to A in debug mode, to A with overcommit, and to the parent without attestation |
 
-> An error occurred (InvalidParameterCombination) when calling the
-> RunInstances operation: The specified instance type is not eligible for
-> Free Tier.
+**Spent on lines 1 to 5:** the parent (`m8g.xlarge`, **$0.17952 an hour**
+on demand in us-east-2, from AWS's price list) ran 25 minutes ($0.076);
+its 60 GB gp3 root ($0.08 a GB-month), its public address ($0.005 an hour)
+and the KMS key ($1 a month, prorated) add about half a cent. About $0.08
+in all. The plan still reported $120.00 of credits at the stop (billing
+lags). The parent is **stopped** (it then costs its disk alone, $0.0066 an
+hour); the KMS key and the free resources stay for lines 6 on.
 
-The project is on AWS's free plan, which launches only free-tier-eligible
-instance types. In us-east-2 those are ten small types (`t3`, `t4g`,
-`t8i`, `t9g` micro and small, `c7i-flex.large`, `m7i-flex.large`), and
-**none supports Nitro Enclaves**, on which Nitro Sandboxes are built
-(`free-tier-types.txt`). So no instance this plan can launch can run a
-sandbox. That is the brief's first escalation ("the plan or its policies
-refuse an API the spike needs"); the way on is the paid plan, which is the
-owner's decision, not the spike's.
+### Deviations from the plan, and why
 
-**What the plan's dry run proved, and what it did not.** The plan said a
-dry run of this launch had succeeded, and it still does: `run-instances
---dry-run` answers "Request would have succeeded" for `m8g.xlarge` with
-and without enclaves, and for `c7g.xlarge` with them
-(`blocked-launch.txt`). A dry run checks the caller's permissions and the
-request's parameters: it does refuse enclaves on a type without them
-(`t4g.small`: "You cannot enable Nitro Enclaves"). It does not apply the
-free plan's eligibility rule, which only the real launch applies. So the
-dry run proved that the API, the enclave option and the instance type are
-permitted to the caller, and nothing about the plan. A dry run is not
-evidence that a launch will pass on the free plan.
+1. **The plan was upgraded.** The first attempt was blocked by the free
+   plan (below, "Before line 1"). After the owner's upgrade the first
+   real launch was the proof it took: a dry run proves nothing here.
+2. **The guest boots with `quiet`.** Firecracker's default command line
+   leaves the guest printing its whole boot log to the serial console,
+   which the Nitro System presents even outside debug mode (ACPI's SPCR
+   table names it): 727 ms of an 820 ms kernel boot. `quiet` takes the
+   kernel to its init in 80 ms. Line 2 reports both.
+3. **The Decrypt is made by the parent, for the sandbox.** AWS's
+   documented flow: the guest's attestation document goes to the parent,
+   whose role calls KMS with it as the `Recipient`; KMS answers
+   `CiphertextForRecipient`, a CMS envelope encrypted to the key inside
+   the document, which only the guest can open. The parent sees the
+   document (public) and the envelope, never the plaintext. The guest
+   making the call itself (TLS it ends, through the parent) is the design
+   for later lines, for the reason in line 5's results.
+4. **The verifier changed when it met a real document.** Its first look
+   refused it at the payload's first byte: the real NSM writes its payload
+   as a CBOR map of indefinite length, which neither AWS's specification
+   nor the NSM API's own encoding shows (`line4-before-the-fix.txt`). It now
+   reads maps and arrays of either length, still bounded, and its test kit
+   writes the real NSM's shape by default.
+5. **`nitro-verify` moved into the verifier's crate**, so the operator's
+   machine builds it from crates it already has; the probe's new crates
+   build on the parent only.
+6. **The probe is a crate of its own** (pure Rust, static musl), and
+   reuses nothing from `sandcastle-guest`: lines 1 to 5 need a minimal
+   guest; line 6 runs sandcastle's own.
 
-**Spent: $0.** The plan reports $120 of credits left (the brief expected
-$100). On AWS now, all free: the spike's SSH key pair, a security group
-whose only inbound rule is port 22 from the operator's address, and the
-parent's IAM role (KMS on keys tagged for the spike only, S3 on the
-spike's buckets only) with its instance profile (`teardown-list.txt`).
-They are kept for the run.
+### Line 1: the host (`line1-host.json`)
 
-**When the plan changes:** on the paid plan a spend limit, when it trips,
-pauses the project and stops every resource. A launch or a `kms:CreateKey`
-refused after the upgrade is reported at once as that, not retried.
+`parent-ready.sh` as root on a fresh `al2023-ami-kernel-6.18-arm64`
+instance, launched with enclaves on:
 
-### Built while blocked, with no AWS spend
+- **First run** (24.7 s): build packages, Firecracker v1.18.0 checked
+  against its pinned SHA-256, Rust 1.99.0 with the musl target, and the
+  pool on the kernel's command line; then exit 3, asking for a reboot.
+- **Reboot** (about 25 s), then **the second run**: the facts.
 
-#### The attestation verifier (line 4's operator half): `crates/nitro-attest`
-
-It checks, in order, what AWS's "Verifying the root of trust" and the NSM
-API's `docs/attestation_process.md` (3.2.2 to 3.2.4) require:
-
-1. The envelope: a COSE_Sign1 (tag 18 or bare), four items, the protected
-   header exactly `{1: -35}` (ES384), the unprotected header empty, the
-   signature 96 bytes.
-2. The payload: the nine known fields, each typed and bounded; the six
-   mandatory ones present, none repeated, no unknown key; the digest
-   `SHA384`, so every PCR is 48 bytes.
-3. The chain: the bundle's first certificate is the pinned root, byte for
-   byte, within its validity (webpki does not check a trust anchor's); the
-   signing certificate chains to it through the rest (webpki: signatures,
-   basic constraints, path lengths, every certificate's validity at the
-   given time); and its key usage allows `digitalSignature`.
-4. The signature: ES384 over COSE's `Sig_structure` by the signing
-   certificate's key.
-5. Freshness: the document's own time at most 5 minutes old, at most 1
-   minute ahead.
-6. The nonce: the caller's exactly (`verify`), or one this verifier issued,
-   live and never used (`verify_issued` with `Nonces`). A forged document is
-   refused before it can use up a nonce.
-
-It does not judge the PCRs: which image is acceptable is the caller's
-policy.
-
-**The root, pinned from AWS's documentation** (`root-certificate.txt`).
-The certificate in `AWS_NitroEnclaves_Root-G1.zip`
-(`https://aws-nitro-enclaves.amazonaws.com/`) hashes to
-`641a0321…79bb5b`: the fingerprint the Nitro Enclaves User Guide gives
-on its "Verifying the root of trust" page
-(`docs.aws.amazon.com/enclaves/latest/user/verify-root.html`, read
-2026-11-20). The zip itself hashes to `8cf60e2b…faff7c`, as the NSM API's
-`docs/attestation_process.md` says. The certificate is embedded in the
-crate and checked against the pinned fingerprint whenever the trust is
-built: `CN=aws.nitro-enclaves`, P-384 with SHA-384, valid 2019-10-28 to
-2049-10-28.
-
-**Its tests** (`unit-tests.txt`, 27, all pass; clippy with warnings
-denied, `clippy.txt`). AWS publishes no sample attestation document or
-test vector (searched: aws-nitro-enclaves-nsm-api, -cose, -sdk-c,
--samples, -image-format), so **the fixtures are built from a self-made
-chain**, labeled so in the code: a root, an intermediate and a signing
-certificate valid for three hours, all P-384 with SHA-384 as AWS's are,
-and documents in the NSM's encoding (its field order and null optionals,
-as the NSM API's own encoding tests pin them).
-
-| Kind | Cases |
+| Fact | Value |
 |---|---|
-| Valid | a whole document, bare and tagged, every field returned as signed; optional fields null or absent |
-| Invalid | a changed byte at 150+ places spread over the whole document; every prefix of it; another root; AWS's real root (a self-made chain is refused by it); a bundle that starts at the trusted root but whose intermediate another root signed; an expired and a not-yet-valid signing certificate; a time past the root's own validity; a signing certificate without `digitalSignature`; a signature by another key; a wrong, short or missing nonce; a document one millisecond too old and one too far ahead (and exactly at each limit, accepted); each field's rule (14 cases); the envelope's shape (8 cases); CBOR and DER faults (truncation at every length, indefinite lengths, reserved values, wrong types, trailing bytes, bad times) |
-| Replay | a document verified, then the same one again: refused; a forged one does not use up the nonce it names |
-| Restart | a nonce issued before a restart, answered after it: refused (and still good on the ledger that issued it) |
+| Instance | `m8g.xlarge`, 4 vCPUs (one thread a core), 15.3 GiB |
+| OS, kernel | Amazon Linux 2023.12.20261120, 6.18.62-127.179.amzn2023 (the AMI's own; above 6.18.51-120.162) |
+| Firecracker | v1.18.0 |
+| Pool | `nitro_enclaves.mempool=8G@0`: "8192 MiB reserved in 16 region(s)"; 4 MiB in use before any sandbox (the slots' own) |
+| CPU pool | 3 vCPUs (the first core is the parent's) |
+| Slots | 4 of 20 |
+| `/dev/nitro_enclaves` | root:root, 0660 |
 
-**The tests bite** (`planted-bugs.txt`): six bugs planted one at a time,
-each caught by a named test: the root not pinned, the root's validity
-skipped, the key usage skipped, the COSE signature ignored, the nonce not
-used up, the age limit off by one.
+### Line 2: boot (`line2-*.json`)
 
-**What this does not prove yet:** that a real Nitro document parses and
-verifies. A real one may show what self-made ones cannot: an extension
-webpki refuses, an extended key usage, a field order or a tag the fixtures
-lack. Line 4 runs it against a real document first, and its evidence will
-say so either way.
+The driver's clock, from spawning Firecracker to the probe's vsock dial
+(its first act as init), and the guest's own boot clock when its init
+began. Our kernel (`guest-kernel.json`), the probe's initrd
+(`probe-images.sha256`), 2 vCPUs, 512 MiB, a vsock and no other device,
+n = 10 each, median (range), ms.
 
-`sandcastle-nitro-spike verify --document <file> --nonce <hex>` runs it on
-the operator's machine and prints what the document attests, PCR3, PCR4
-and the module id redacted unless `--reveal-parent` is given.
+| Mode | `cpu_overcommit` | Spawn to userspace | Guest kernel to init | Power-off to Firecracker's exit |
+|---|---|---|---|---|
+| Confidential | off | **453.2** (449.1–457.8) | 80 (76–81) | 82.4 |
+| Confidential | on | **455.6** (451.2–476.9) | 80 (78–86) | 84.5 |
+| Direct | off | **303.8** (297.6–306.8) | 80 (74–80) | 79.2 |
+| Direct | on | **308.8** (302.5–317.2) | 80 (77–83) | 82.4 |
+| Confidential, without `quiet` | off | 1,193.1 (1,184.1–1,204.9) | 821.5 (814–827) | 82.4 |
+| Confidential, without `quiet` | on | 1,220.4 (1,200.7–1,226.1) | 839 (828–841) | 82.5 |
+| Direct, without `quiet` | off | 1,047.8 (1,043.7–1,051.9) | 819.5 (811–822) | 84.4 |
+| Direct, without `quiet` | on | 1,064.3 (1,048.5–1,073.7) | 832.5 (819–841) | 82.2 |
 
-#### Firecracker's configuration (lines 1, 2, 6): `crates/nitro-spike/src/config.rs`
+**By memory** (with `quiet`, overcommit off, n = 5): it grows about 60 ms
+a GiB in both modes, so a 6 GiB Hermes computer starts its kernel about
+0.8 s after the launch.
 
-A sandbox as typed data (`Boot` as kernel, initrd and command line, or a
-pre-built EIF; vCPUs; memory; drives; NICs; the vsock; the `enclave`
-options; each device's DMB), validated against every documented limit
-before it is written as Firecracker's JSON. Choices that differ from
-Firecracker's defaults, on purpose:
+| Mode | 512 MiB | 2 GiB | 6 GiB |
+|---|---|---|---|
+| Confidential | 453.2 | 544.9 (544.0–549.9) | 802.6 (801.5–1,018.3) |
+| Direct | 303.8 | 396.6 (395.3–398.5) | 630.7 (627.4–637.3) |
 
-- The command line is always written out: it is measured into PCR0 and
-  PCR1 like any other, so it is chosen where it is spelled.
-- Every `enclave` option is written, `false` ones included, and in
-  confidential mode every device's DMB size, so a change in Firecracker's
-  defaults cannot change a sandbox's mode or its pool.
-- No drive is ever the root device: Firecracker would append `root=` to
-  the command line (and so to the measurements), and the guest's init
-  mounts its own root.
-- `cpu_ids` and `numa_nodes` are not modeled: an `m8g.xlarge` is one NUMA
-  node. Line 10's 8-vCPU type is checked for nodes first.
+**Where a confidential launch's 453 ms go** (Firecracker's own log, one
+launch, `line2-confidential-firecracker.log`): spawn to "Enclave started",
+53 ms (the 512 MiB CMA allocation 24 ms, the image loaded and the memory
+donated 11 ms, the vsock's 16 MiB DMB 1.5 ms); then 398 ms to the guest's
+vsock driver ready, of which the kernel is about 80 ms and the rest the
+Nitro System's UEFI firmware ("UEFI firmware (version built at 09:00:00 on
+Nov 1 2018)"). Direct mode's 150 ms less is in that firmware's part.
 
-Its pool accounting is AWS's: memory, 2 MiB a sandbox, and in confidential
-mode each device's DMB; slots 4, then steps of 8 at 128 MiB each. Line 10
-checks it against `mem_pool/in_use` on the parent.
+**The pool, as accounted:** what `mem_pool/in_use` read with one sandbox
+up is the memory, 2 MiB, 16 MiB for the vsock's DMB in confidential mode,
+and the 4 MiB in use before: 534 MiB at 512 confidential, 2,070 and 2,054
+at 2 GiB, 6,166 and 6,150 at 6 GiB. The configuration writer's
+`pool_mib()` predicts each to the MiB (less the 4 MiB base).
 
-Tests (`unit-tests.txt`, 5): AWS's own example `sandbox.json` key by key,
-with only the deliberate additions; each mode and option rendered; every
-limit at its edge and one past (memory, vCPUs with and without
-overcommit and with two-thread cores, devices, command line, socket path,
-CID, ids, taps, DMB sizes, a DMB in direct mode); the pool's accounting;
-the slot steps.
+### Line 3: what the parent sees (`line3-canary-*.json`)
 
-#### The host scripts (lines 1 and 12): written, not run
+The probe filled 64 MiB of fresh memory with a random canary, wrote a
+second canary to the console and a third over the first MiB of a plain
+virtio disk (a 64 MiB file on the parent). Then, as root on the parent,
+with the sandbox running:
 
-- `parent-ready.sh`: as root on a fresh AL2023 parent; idempotent, exit 3
-  asking for a reboot. The kernel (6.18.51-120.162 or later), the pool
-  on every kernel's command line, build packages, Firecracker v1.18.0
-  checked against the SHA-256 its release publishes (pinned in the
-  script), Rust 1.99.0 with the musl target for the build user, the slots;
-  then the host's facts as JSON, with no instance id, AMI id or address.
-- `guest-kernel.sh`: Amazon Linux's `kernel6.18-6.18.62-127.179.amzn2023`
-  tag, Firecracker v1.18's 6.18 microVM config and EFI fragment, then the
-  spike's own lines (NSM, dm-verity, loop, FUSE, no modules), refusing a
-  line `olddefconfig` dropped; the image's SHA-256 and every input's pin
-  in `kernel.json`.
-- `teardown.sh list|delete`: everything tagged `project=nitro-spike` in
-  the Region (instances, volumes, snapshots, security groups, key pairs,
-  KMS keys, S3 buckets) and the IAM role and profile by name and tag; ids
-  printed as hashes. `list` found exactly the four resources above.
+| Where the parent looked | Direct | Confidential |
+|---|---|---|
+| Firecracker's mapping of the guest's memory | `512 MiB rw-s /dev/nitro_enclaves` | `512 MiB ---s /dev/nitro_enclaves` (no access) |
+| Firecracker's memory: every readable mapping, through `/proc/<pid>/mem` | **found** (24,546 matches in 542 MB) | not found (0 in 39 MB) |
+| Firecracker's no-access mapping, read anyway through `/proc/<pid>/mem` | (readable above) | not found: all 512 MiB read, **every byte zero** |
+| All of the parent's System RAM, through `/proc/kcore` (16.9 GB) | **found** (24,547) | not found (0) |
+| The disk's backing file | **found** (409) | **found** (409) |
+| The console, in Firecracker's log | hidden | hidden; shown in debug mode (the control) |
 
-#### FPAC's remote on the parent (line 8): sized, not built
+A "match" is the canary repeated 64 times (2.6 KB); the parent holds the
+text itself once in its command and once in the scanner's needle, so a
+count of one or two is its own copies. The parent stayed up through every
+read (its kernel panics on an oops here, `panic_on_oops=1`).
 
-FPAC's folder remote (`crates/testkit/src/folder.rs`, 325 lines) answers
-the contract from local files. An S3 remote on the parent needs what it
-does not have: SigV4 signing, credentials from the parent's IMDS, TLS to
-S3, put-if-absent as S3's conditional `If-None-Match: *` (a 412 then read
-back for its stored checksum: same or conflict), ranged gets with S3's
-416, and the disk's head and epoch kept by the parent across lives (the
-platform's part, contract section 3). Estimate: about 500 non-test lines
-and 250 of tests (AWS's published SigV4 vectors, the status mapping
-against a local stand-in, the head file's restart), as one draft FPAC PR
-on `nitro-spike`: the folder remote's HTTP front split from its storage
-behind one trait, and an S3 store beside the folder. The AWS SDK for Rust
-would make it about 150 lines but add about a hundred crates to audit, so
-it is not proposed. Not built: it is over the few hundred lines the
-coordinator set as the line for asking first.
+**What this claims, and no more:** with a confidential sandbox running,
+the parent's root reads its pages as zeros through Firecracker's process
+and through the kernel's view of RAM, and finds no copy of the guest's
+memory anywhere in RAM. It does not claim that no other route exists (DMA
+from a device, the hypervisor, a cold-boot attack); those are AWS's
+claim, not measured here. A plain disk is the parent's to read in either
+mode, as AWS says: line 8's sealed disk is the answer.
+
+### Line 4: attestation (`line4-*.json`)
+
+The probe asked its NSM for a document carrying a fresh 32-byte nonce the
+driver drew; the NSM answered in 2 ms. Each document (4,492 bytes) was
+copied to the operator's machine and checked there by `nitro-verify` with
+its nonce, about 106 s after it was made: **all five verified** down to
+the root pinned by AWS's fingerprint.
+
+A real document, as seen: a bare COSE_Sign1; the protected header
+`{1: -35}`; the payload's map of indefinite length; PCRs 0 to 15 listed
+(16 to 31 not); a 639-byte signing certificate named for the parent's
+instance and its enclave, valid for 3 hours, key usage `digitalSignature`
+and `nonRepudiation`, no extended key usage; a bundle of four (the
+533-byte root, then three intermediates).
+
+| PCR | What it measures | Image A | Image A again | Image B (`nitro.spike=b` added) | A, `cpu_overcommit` | A, debug mode |
+|---|---|---|---|---|---|---|
+| 0 | the image and the launch's flags | `e2c83d2a…` | same | `a8f73fcc…` | `d86ab99f…` | zero |
+| 1 | kernel, command line, first initrd | `dfaf53ed…` | same | `7d48c5a7…` | same as A | zero |
+| 2 | later initrds (none) | `21b9efbc…` | same | same | same | zero |
+| 3 | the parent's role ARN | `<parent>` | same | same | same | same as A |
+| 4 | the parent's instance id | `<parent>` | same | same | same | same as A |
+| 5 | the PCI functions at boot | `271079fe…` | same | same | same | zero |
+| 6 | the whole image file | `ad4f8f8a…` | same | `00100757…` | `75a32f28…` | zero |
+| 7 to 15 | (not set) | zero | zero | zero | zero | zero |
+
+- **The same image twice** gives the same PCR 0, 1, 2, 5 and 6 (and 6
+  too: Firecracker builds the same image file from the same inputs).
+- **A changed command line** changes 0, 1 and 6; 2 is the same, since
+  there is one initrd. Its value, `21b9efbc…`, is AWS's own example's:
+  the measurement of no second initrd.
+- **`cpu_overcommit`** changes 0 and 6 and not 1: PCR0 records the
+  launch's flags, as AWS's table says.
+- **Debug mode** zeroes 0, 1, 2, 5 and 6; 3 and 4 keep the parent's.
+- **PCR3 and PCR4** are SHA-384 of 48 zero bytes and then the role's ARN
+  or the instance's id, in all five (AWS's formula, checked against the
+  real ARN and id on the operator's machine and redacted here).
+- **Refused, on a real document:** a changed byte in the bundle, in the
+  signature or in the signing certificate; the other launch's nonce; the
+  document an hour later (its age); a day later (the signing
+  certificate's 3 hours).
+- **Fail first:** before the change in deviation 4, every real document
+  was refused at the payload's first byte; after it, all five verify. The
+  verifier's tests now include both lengths of the payload's map.
+
+### Line 5: key release (`line5-*.json`)
+
+The key's policy (`line5-kms-key-policy.json`, redacted): the project's
+administrators may manage and encrypt but never decrypt, grant or
+re-encrypt; the parent's role may `Decrypt` and `GenerateDataKey` only
+when `kms:RecipientAttestation:PCR0` is image A's. KMS took the condition
+key. The secret: 32 random bytes made on the operator's machine, encrypted
+there under the key, then shredded; only its SHA-256 (`ac756507…`) was
+kept, so the parent never had it.
+
+| Decrypt | Recipient | Result |
+|---|---|---|
+| The parent's role, for image A | image A's document, with its RSA key | **Allowed.** KMS answered only `CiphertextForRecipient`; the probe opened it: 32 bytes, SHA-256 `ac756507…`, the secret's |
+| The parent's role, for image B | image B's document | **Denied** (`AccessDeniedException`) |
+| The parent's role, for image A in debug mode | its document (PCR0 zero) | **Denied** |
+| The parent's role, for image A with `cpu_overcommit` | its document (another PCR0) | **Denied** |
+| The parent's role, alone | none | **Denied** |
+
+In the guest: a fresh RSA-2048 key took 355 ms, the NSM 2 ms. The key
+opens one envelope and is dropped.
+
+**What this does not give, found here:** the envelope authenticates
+nothing. Anyone who sees the document, the parent included, can seal an
+envelope of its own to the public key the document carries, and the
+guest cannot tell it from KMS's. So the parent cannot read what KMS
+releases, but it can hand the guest a value of its choosing instead. A
+guest can trust a released secret only by how it uses it (a disk key that
+opens the disk's own seals proves itself; a new disk's key does not), or
+by calling KMS over TLS it ends itself, the parent relaying only bytes.
+Line 8's key, and the design for disks sealed with keys released by
+attestation, have to take the second way or generate the key inside.
+
+### Before line 1: blocked by the free plan (2026-11-20, resolved)
+
+The project was first on AWS's free plan, which launches only
+free-tier-eligible types; in us-east-2 none of the ten supports Nitro
+Enclaves (`free-tier-types.txt`), and the launch was refused: "The
+specified instance type is not eligible for Free Tier"
+(`blocked-launch.txt`). A dry run of the same launch answers "would have
+succeeded": it checks the caller's permissions and the request's
+parameters (it does refuse enclaves on a type without them), not the
+plan. The owner upgraded the project to the paid plan the same day.
+
+### Built before the instance, and how it held
+
+- **The verifier** (`crates/nitro-attest`): built on self-made documents
+  first (AWS publishes no sample; searched aws-nitro-enclaves-nsm-api,
+  -cose, -sdk-c, -samples, -image-format). Six planted bugs, each caught
+  by a named test (`planted-bugs.txt`). The real documents then found the
+  one shape the fixtures lacked (deviation 4); nothing else changed.
+- **The configuration writer**: launched every sandbox above; the pool's
+  accounting held to the MiB.
+- **The root, pinned from AWS's documentation** (`root-certificate.txt`):
+  the certificate in `AWS_NitroEnclaves_Root-G1.zip` hashes to
+  `641a0321…79bb5b`, the fingerprint on the Nitro Enclaves User Guide's
+  "Verifying the root of trust" page; the zip to `8cf60e2b…faff7c`, as the
+  NSM API's `docs/attestation_process.md` says. Every real document's
+  bundle starts with it.
+
+### Line 8, decided (the coordinator, 2026-11-20)
+
+No S3 remote is built. FPAC's contract has the guest speak plain HTTP to
+the platform's route and hold no credential; in the product that route is
+the cell's, which has its own S3 client. So line 8 runs FPAC's test-kit
+folder remote on the parent, reached over the sandbox's network, with its
+per-object delay and put rate set from S3 round trips measured on the
+parent (a small tagged bucket, removed at teardown). Every line-8 and
+line-9 number that depends on it will say "modelled from measured S3
+round trips".
 
 ### Acceptance so far
 
 | # | What | Result |
 |---|---|---|
-| 1 | Host | **Not run: blocked before launch.** The script is written. |
-| 2 | Boot | Not run. The configuration writer is built and tested. |
-| 3 | What the parent sees | Not run. |
-| 4 | Attestation | Not run on the instance. The verifier is built and tested on self-made documents, the root pinned from AWS's docs. |
-| 5 | Key release | Not run. |
-| 6 to 10 | Our guest, network, sealed disk, wake, density | Not run. |
-| 11 | The build | The two new crates: clippy (warnings denied) and every test pass on x86_64 here. The whole workspace and arm64: on the instance and CI. |
-| 12 | Nothing left behind | Four free resources kept for the run, listed by `teardown.sh list`; $0 spent. |
-
-### What runs first once an instance can launch
-
-Each a step on this branch, in order, each needing the one before:
-
-1. Launch the parent (tagged, inventoried), run `parent-ready.sh`, reboot,
-   run it again: line 1's facts.
-2. `guest-kernel.sh` on the parent.
-3. The guest probe: a static init for an initrd that says hello over vsock
-   with its uptime, holds a canary in memory and writes one to a disk,
-   asks the NSM for a document with the caller's nonce and a fresh RSA key,
-   and opens KMS's `CiphertextForRecipient`. Its tests run on any host.
-4. The driver's launch half: the configuration above, Firecracker
-   spawned, each step timed: lines 2 and 3.
-5. The KMS key and its policy (PCR0 only for Decrypt, no root delegation
-   for it), and the three Decrypts: lines 4 and 5. Then stop and report.
+| 1 | Host | **Pass** |
+| 2 | Boot | **Measured**: 453 ms confidential, 304 ms direct |
+| 3 | What the parent sees | **Pass**, with what was tried stated |
+| 4 | Attestation | **Pass** on real documents |
+| 5 | Key release | **Pass**; the envelope's lack of authentication recorded |
+| 6 to 10 | Our guest, network, sealed disk, wake, density | Not started (waiting for "continue") |
+| 11 | The build | The three new crates' tests and clippy (warnings denied) pass on arm64 (the parent) and the verifier's on x86_64 here; CI builds and tests the whole workspace on x86_64 |
+| 12 | Nothing left behind | Not yet: the parent (stopped), its disk, the KMS key and four free resources, all tagged and inventoried |
 
 ### Gaps
 
-- Nothing has run on Nitro hardware. Every AWS-side fact above is the
-  documentation's, read 2026-11-20.
-- The verifier has seen no real document (above).
-- The two pages disagree on the largest `user_data` and `nonce` (AWS's
-  guide 1024 bytes, the NSM's process document 512); the verifier takes
-  1024.
-- The whole workspace was not built here: the operator's machine builds
-  only crates whose sources it already has (no registry downloads on it).
-  CI on this branch builds the whole workspace on x86_64.
+- One instance type, one Region, one day. Boot times on other sizes and
+  on x86 parents are not measured.
+- The boot's firmware part (about 320 ms confidential) is attributed by
+  subtraction, not by a timestamp of its own.
+- Line 3's "not found" covers the routes stated; others are AWS's claim.
+- Line 5's Decrypt was made by the parent for the guest (AWS's flow), not
+  by the guest over its own TLS.

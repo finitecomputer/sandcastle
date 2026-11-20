@@ -5,7 +5,7 @@
 
 use thiserror::Error;
 
-use crate::cbor::{self, Reader};
+use crate::cbor::{self, Count, Reader};
 use crate::{AttestError, Attested, CABUNDLE_LEN_MAX, CERTIFICATE_BYTES_MAX, DOCUMENT_BYTES_MAX, MODULE_ID_BYTES_MAX, NONCE_FIELD_BYTES_MAX, PAYLOAD_BYTES_MAX, PCRS_MAX, PCR_BYTES, PUBLIC_KEY_BYTES_MAX, SIGNATURE_BYTES, USER_DATA_BYTES_MAX};
 
 /// COSE_Sign1's CBOR tag (RFC 9052). AWS's documents come bare; the NSM
@@ -202,14 +202,49 @@ impl Payload<'_> {
     }
 }
 
+/// Walks a map's or an array's items, of either length, holding them to
+/// `min..=max`: a definite count is checked before the first item, an
+/// indefinite one as it goes and at its break.
+struct Items {
+    count: Count,
+    seen: u64,
+    field: Field,
+    min: u64,
+    max: u64,
+}
+
+impl Items {
+    fn new(count: Count, field: Field, min: u64, max: u64) -> Result<Items, AttestError> {
+        if let Count::Definite(n) = count {
+            self::count(field, n, min, max)?;
+        }
+        Ok(Items { count, seen: 0, field, min, max })
+    }
+
+    /// Whether another item follows (a break is consumed).
+    fn next(&mut self, r: &mut Reader<'_>) -> Result<bool, AttestError> {
+        let more = match self.count {
+            Count::Definite(n) => self.seen < n,
+            Count::Indefinite => !r.take_break(),
+        };
+        if !more {
+            return count(self.field, self.seen, self.min, self.max).map(|()| false);
+        }
+        self.seen += 1;
+        if self.seen > self.max {
+            return Err(field_err(self.field, FieldFault::Count { n: self.seen, min: self.min, max: self.max }));
+        }
+        Ok(true)
+    }
+}
+
 pub(crate) fn payload(bytes: &[u8]) -> Result<Payload<'_>, AttestError> {
     let mut r = Reader::new(bytes);
-    let entries = r.map()?;
-    count(Field::Map, entries, MANDATORY as u64, FIELDS.len() as u64)?;
+    let mut entries = Items::new(r.map_count()?, Field::Map, MANDATORY as u64, FIELDS.len() as u64)?;
     let mut seen = [false; FIELDS.len()];
     let mut p = Payload { module_id: "", timestamp_ms: 0, pcrs: Vec::new(), certificate: &[], cabundle: Vec::new(), public_key: None, user_data: None, nonce: None };
-    // Bounded: entries is at most nine, checked above.
-    for _ in 0..entries {
+    // Bounded: Items stops at nine entries.
+    while entries.next(&mut r)? {
         let key = r.text()?;
         let Some(slot) = FIELDS.iter().position(|(_, k)| *k == key) else {
             return Err(field_err(Field::Map, FieldFault::UnknownKey));
@@ -242,10 +277,9 @@ pub(crate) fn payload(bytes: &[u8]) -> Result<Payload<'_>, AttestError> {
                 length(field, p.certificate, 1, CERTIFICATE_BYTES_MAX)?;
             }
             Field::Cabundle => {
-                let n = r.array()?;
-                count(field, n, 1, CABUNDLE_LEN_MAX)?;
-                // Bounded by CABUNDLE_LEN_MAX, checked above.
-                for _ in 0..n {
+                let mut certs = Items::new(r.array_count()?, field, 1, CABUNDLE_LEN_MAX)?;
+                // Bounded: Items stops at CABUNDLE_LEN_MAX.
+                while certs.next(&mut r)? {
                     let c = r.bytes()?;
                     length(field, c, 1, CERTIFICATE_BYTES_MAX)?;
                     p.cabundle.push(c);
@@ -286,12 +320,11 @@ pub(crate) fn payload(bytes: &[u8]) -> Result<Payload<'_>, AttestError> {
 /// The PCR map: 1 to 32 entries, indexes below 32, none twice, each 48
 /// bytes (SHA-384, the digest the payload names).
 fn pcrs<'a>(r: &mut Reader<'a>) -> Result<Vec<(u8, &'a [u8])>, AttestError> {
-    let n = r.map()?;
-    count(Field::Pcrs, n, 1, PCRS_MAX)?;
+    let mut items = Items::new(r.map_count()?, Field::Pcrs, 1, PCRS_MAX)?;
     let mut seen = 0u32;
-    let mut out = Vec::with_capacity(n as usize);
-    // Bounded by PCRS_MAX, checked above.
-    for _ in 0..n {
+    let mut out = Vec::with_capacity(PCRS_MAX as usize);
+    // Bounded: Items stops at PCRS_MAX.
+    while items.next(r)? {
         let index = r.uint()?;
         if index >= PCRS_MAX {
             return Err(field_err(Field::Pcrs, FieldFault::PcrIndex(index)));
@@ -305,7 +338,7 @@ fn pcrs<'a>(r: &mut Reader<'a>) -> Result<Vec<(u8, &'a [u8])>, AttestError> {
         length(Field::Pcrs, value, PCR_BYTES, PCR_BYTES)?;
         out.push((index as u8, value));
     }
-    assert_eq!(out.len() as u64, n);
+    assert_eq!(out.len() as u64, items.seen);
     Ok(out)
 }
 
@@ -409,6 +442,29 @@ mod tests {
             change(&mut f);
             assert_eq!(field_fault(&testkit::document(&chain, &f)), (field, fault), "case {i}");
         }
+    }
+
+    // Goal: the payload's map reads in either length: the real NSM writes
+    // it indefinite (seen on the spike's first real document, which the
+    // definite-only reader refused at byte 0), the NSM API's serde
+    // definite. Method: both, same fields.
+    #[test]
+    fn payload_map_of_either_length() {
+        let chain = testkit::Chain::new();
+        for indefinite in [true, false] {
+            let mut f = Fields::new();
+            f.indefinite = indefinite;
+            let doc = testkit::document(&chain, &f);
+            let e = envelope(&doc).unwrap();
+            assert_eq!(e.payload[0], if indefinite { 0xbf } else { 0xa9 });
+            assert_eq!(payload(e.payload).unwrap().nonce, f.nonce.as_deref());
+        }
+        let mut f = Fields::new();
+        f.indefinite = true;
+        let doc = testkit::document(&chain, &f);
+        let e = envelope(&doc).unwrap();
+        let unclosed = &e.payload[..e.payload.len() - 1];
+        assert!(payload(unclosed).is_err(), "an indefinite map without its break");
     }
 
     // Goal: the optional fields may be null or absent, as the NSM's
