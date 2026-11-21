@@ -66,10 +66,16 @@ impl Image {
 
     /// The command line: the verity table (`/dev/vdb` its data, `/dev/vda`
     /// its tree), the guest told to mount it, and the KMS key it may use.
-    pub fn cmdline(&self, kms_key: Option<&str>) -> String {
+    /// `Root::Linear` maps the same data through dm-linear instead, with no
+    /// hashing: a measurement's control (line 9's cold reads), never a
+    /// computer's root.
+    pub fn cmdline(&self, kms_key: Option<&str>, root: Root) -> String {
         assert!(self.root_hash.len() == 64 && self.root_hash.bytes().all(|b| b.is_ascii_hexdigit()), "a SHA-256 root hash");
         assert!(self.salt.bytes().all(|b| b.is_ascii_hexdigit()));
-        let table = format!("{VERITY_NAME},,,ro,0 {} verity 1 /dev/vdb /dev/vda 4096 4096 {} {} sha256 {} {}", self.blocks * 8, self.blocks, self.hash_start, self.root_hash, self.salt);
+        let table = match root {
+            Root::Verity => format!("{VERITY_NAME},,,ro,0 {} verity 1 /dev/vdb /dev/vda 4096 4096 {} {} sha256 {} {}", self.blocks * 8, self.blocks, self.hash_start, self.root_hash, self.salt),
+            Root::Linear => format!("{VERITY_NAME},,,ro,0 {} linear /dev/vdb 0", self.blocks * 8),
+        };
         let mut c = format!("panic=1 initcall_blacklist=i8042_init quiet dm-mod.create=\"{table}\" dm-mod.waitfor=/dev/vda,/dev/vdb sandcastle.image=/dev/dm-0");
         if let Some(k) = kms_key {
             c.push_str(&format!(" nitro.kms_key={k}"));
@@ -97,6 +103,13 @@ fn scratch(path: &Path, gib: u64) -> Result<(), Failure> {
     }
 }
 
+/// How the root's device maps the image disk.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Root {
+    Verity,
+    Linear,
+}
+
 /// What a computer's launch needs.
 pub struct Plan<'a> {
     pub image: &'a Image,
@@ -111,6 +124,8 @@ pub struct Plan<'a> {
     pub entrypoint: Vec<String>,
     pub env: Vec<String>,
     pub ca_pem: Option<String>,
+    pub mode: Mode,
+    pub root: Root,
 }
 
 pub fn launch(plan: &Plan<'_>, parent: &Parent) -> Result<(Guest, Sandbox), Failure> {
@@ -123,7 +138,7 @@ fn launch_as(plan: &Plan<'_>, parent: &Parent, cid: u32, cpu_overcommit: bool) -
     let scratch_path = PathBuf::from(SCRATCH_ROOT).join(format!("{}.img", plan.dir.file_name().and_then(|n| n.to_str()).unwrap_or("computer")));
     scratch(&scratch_path, plan.scratch_gib)?;
     let sandbox = Sandbox {
-        boot: Boot::Kernel { kernel: plan.kernel.into(), initrd: Some(plan.initrd.into()), cmdline: plan.image.cmdline(plan.kms_key) },
+        boot: Boot::Kernel { kernel: plan.kernel.into(), initrd: Some(plan.initrd.into()), cmdline: plan.image.cmdline(plan.kms_key, plan.root) },
         vcpus: plan.vcpus,
         memory_mib: plan.memory_mib,
         drives: vec![
@@ -133,7 +148,7 @@ fn launch_as(plan: &Plan<'_>, parent: &Parent, cid: u32, cpu_overcommit: bool) -
         ],
         nics: if plan.net { vec![Nic { id: "eth0".into(), tap: TAP.into(), dmb_mib: None }] } else { vec![] },
         vsock: Vsock { guest_cid: cid, uds_path: plan.dir.join("v.sock"), dmb_mib: None },
-        enclave: Enclave { mode: Mode::Confidential, cpu_overcommit, hotplug: false, debug: false, cpu_accounting: false },
+        enclave: Enclave { mode: plan.mode, cpu_overcommit, hotplug: false, debug: false, cpu_accounting: false },
     };
     let mut env = plan.image.env.clone();
     env.extend(plan.env.iter().cloned());
@@ -173,6 +188,24 @@ fn stats(samples: &[f64]) -> Value {
 }
 
 fn base_plan<'a>(args: &'a [String], image: &'a Image, name: &str) -> Result<Plan<'a>, Failure> {
+    // Line 9's cold-read study: `--mode direct`, `--root linear`, and
+    // `--entrypoint-file <sh>` (the workload's first script, run by
+    // /bin/sh, since a direct sandbox has no NSM for the image's own
+    // entrypoint's clock). Each a measurement's setting, never a computer's.
+    let mode = match flag(args, "--mode") {
+        None | Some("confidential") => Mode::Confidential,
+        Some("direct") => Mode::Direct,
+        Some(m) => return Err(Failure(format!("--mode {m}: confidential or direct"))),
+    };
+    let root = match flag(args, "--root") {
+        None | Some("verity") => Root::Verity,
+        Some("linear") => Root::Linear,
+        Some(r) => return Err(Failure(format!("--root {r}: verity or linear"))),
+    };
+    let entrypoint = match flag(args, "--entrypoint-file") {
+        None => vec!["/opt/nitro/entrypoint.sh".into()],
+        Some(f) => vec!["/bin/sh".into(), "-c".into(), std::fs::read_to_string(f).map_err(|e| fail(f, e))?, "nitro-entry".into()],
+    };
     Ok(Plan {
         image,
         kernel: flag(args, "--kernel").ok_or_else(|| Failure("--kernel".into()))?,
@@ -183,9 +216,11 @@ fn base_plan<'a>(args: &'a [String], image: &'a Image, name: &str) -> Result<Pla
         memory_mib: flag(args, "--mem-mib").and_then(|v| v.parse().ok()).unwrap_or(4096),
         net: false,
         kms_key: flag(args, "--kms-key"),
-        entrypoint: vec!["/opt/nitro/entrypoint.sh".into()],
+        entrypoint,
         env: vec!["NITRO_FPAC=off".into()],
         ca_pem: None,
+        mode,
+        root,
     })
 }
 
@@ -664,7 +699,7 @@ pub fn hold(args: &[String]) -> Result<Value, Failure> {
     // Bounded by the operator: it holds until killed.
     loop {
         match g.said.recv_timeout(Duration::from_secs(3600)) {
-            Ok(guest::Said::Line { text, .. }) => println!("guest: {text}"),
+            Ok(guest::Said::Line { text, .. }) => println!("guest +{:.0}: {text}", g.since_spawn_ms()),
             Ok(other) => {
                 println!("guest: {other:?}");
                 break;
@@ -682,7 +717,11 @@ pub fn exec(args: &[String]) -> Result<Value, Failure> {
     let at = args.iter().position(|a| a == "--").ok_or_else(|| Failure("-- <argv>".into()))?;
     let env: Vec<String> = args.windows(2).filter(|w| w[0] == "--env").map(|w| w[1].clone()).collect();
     let vm = sandcastle_vm::client::Vm::new(dir);
-    let out = vm.exec(Proc { argv: args[at + 1..].to_vec(), env, cwd: Some("/".into()), user: None }, None).map_err(|e| fail("exec", e))?;
+    let stdin = match flag(args, "--stdin") {
+        Some(f) => Some(std::fs::read(f).map_err(|e| fail(f, e))?),
+        None => None,
+    };
+    let out = vm.exec(Proc { argv: args[at + 1..].to_vec(), env, cwd: Some("/".into()), user: None }, stdin.as_deref()).map_err(|e| fail("exec", e))?;
     Ok(json!({"code": out.code, "stdout": String::from_utf8_lossy(&out.stdout), "stderr": String::from_utf8_lossy(&out.stderr)}))
 }
 

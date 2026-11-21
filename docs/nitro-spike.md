@@ -224,6 +224,7 @@ this backend loses (memory given back, pause).
 | `crates/nitro-spike/host/verity-image.sh` | An image's root as a raw ext4 disk with its verity tree, built to the same bytes each time; its table and root hash as JSON | Run (line 6) |
 | `crates/nitro-spike/host/nitro-entrypoint.sh` | The image's entrypoint: the clock, the key, FPAC's mount at Hermes' home, then Hermes | Run (lines 6 to 10) |
 | `crates/nitro-spike/host/teardown.sh` | Line 12: list everything tagged for the spike, or remove all of it or the types named | `list` and `delete s3-bucket` run |
+| `crates/nitro-spike/host/cold-reads.py`, `cold-entry.sh` | Line 9's cold-read study: one computer a sample on the plain disk, a cold, warm and cache-dropped `hermes chat` or a gateway's first reply, under the driver's study settings (`--mode direct`, `--root linear`, `--entrypoint-file`, `exec --stdin`) and the guest's sysfs ones | Run (line 9, 2026-11-21) |
 
 ### Dependencies
 
@@ -284,7 +285,7 @@ this backend loses (memory given back, pause).
 | 6 | Our guest | sandcastle's guest agent as init, Hermes' image as the root under dm-verity (its root hash on the measured command line): ready **927 ms** after spawn, an exec round trip **0.5 ms**; stdin and exit codes right; a changed byte of the root refused (EIO) |
 | 7 | Network | Through sandcastle's egress proxy on the parent: an intercepted host answered by the handler; internet off; the metadata service and the parent's own address refused. Leak 1 recorded: the proxy reads intercepted traffic |
 | 8 | Sealed disk | The key reaches the guest **only over TLS the guest ends**, Amazon's roots pinned; the parent signs a hash and carries bytes, and **cannot choose or learn the key** (a forged envelope and an intercepting CA both refused). FPAC's conformance **19 of 19**; the canary **0** in the store and the scratch disk, against 15 to 18 with no key (modelled from measured S3 round trips) |
-| 9 | Wake | From the second wake on: FPAC mounted **1.13 s** after spawn at 1 GB, 1.09 to 1.32 s at 10 GB; Hermes' first reply **14.3 s**, of which about 9 s is the first read of its files from the root image (modelled from measured S3 round trips) |
+| 9 | Wake | From the second wake on: FPAC mounted **1.13 s** after spawn at 1 GB, 1.23 s at 10 GB (n = 5); Hermes' first one-shot reply 14.3 s, about 9 s of it Hermes starting its gateway (not reads: corrected 2026-11-21). Through its gateway, as FPAC measured: **11.5 s**, of which Nitro's own share is about 0.3 s (modelled from measured S3 round trips) |
 | 10 | Density and cost | An idle Hermes: 238 MiB resident, but its 3 GiB stay taken. On an 8-vCPU `m8g.2xlarge`: **8 computers of 3 GiB or 4 of 6 GiB** (3 without overcommit); **$32.76 and $65.53 per awake computer-month** on demand |
 | 11 | Build | Workspace clippy (warnings denied) clean and **147 of 147 tests** on arm64, after two small fixes; x86_64 by CI |
 | 12 | Left behind | The S3 bucket removed; the parent **stopped** and its KMS key kept, by decision: **about $5.80 a month** |
@@ -739,15 +740,17 @@ volume. Times are from Firecracker's spawn. Every number in this section
 is **modelled from measured S3 round trips**, except the agent's ready
 time and the key's.
 
-| From the second wake on, median (range) | 1 GB disk, n = 4 | 10 GB disk, n = 2 |
+| From the second wake on, median (range) | 1 GB disk, n = 4 | 10 GB disk, n = 5 |
 |---|---|---|
-| The agent ready | 738 ms (732–744) | 759, 760 ms |
-| The key in hand (the clock, a new RSA key, the NSM, KMS over TLS) | 998 ms (958–1,153) | 951, 1,154 ms |
-| FPAC mounted | **1,127 ms** (1,104–1,273) | **1,085, 1,315 ms** |
-| FPAC's open: one round to the store | 23 asks, 40–63 ms; 29 map pages | 23 asks, 43–70 ms; 64 map pages |
+| The agent ready | 738 ms (732–744) | 879 ms (725–892) |
+| The key in hand (the clock, a new RSA key, the NSM, KMS over TLS) | 998 ms (958–1,153) | 1,115 ms (919–1,417) |
+| FPAC mounted | **1,127 ms** (1,104–1,273) | **1,231 ms** (1,046–1,532) |
+| FPAC's open: one round to the store | 23 asks, 40–63 ms; 29 map pages | 22 asks, 39–49 ms; 61 map pages |
 | Misses before the reply | 0 | 0 |
-| Hermes' first reply | **14.3 s** (14.25–24.3) | **14.1, 14.3 s** |
-| The sleep: FPAC's last flush | 2.58 s (2.57–2.61) | 2.56, 2.55 s |
+| Hermes' first reply (the one-shot CLI) | **14.3 s** (14.25–24.3) | **13.0 s** (12.76–13.39) |
+| The sleep: FPAC's last flush | 2.58 s (2.57–2.61) | 2.55 s (2.54–2.56) |
+
+The 10 GB column is the rerun of 2026-11-21, seven lives (`lives-sealed-10gb-7.json`). The first run's two wakes (`lives-sealed-10gb.json`) mounted at 1,085 and 1,315 ms.
 
 - **The key costs about 260 ms** after ready (the median). `nitro-key`
   itself took 118–740 ms over the ten lives, almost all of it the fresh
@@ -758,28 +761,135 @@ time and the key's.
   2.0 s (10 GB), with Hermes' reply at 15.5 and 16.8 s.
 - **A new 10 GB disk**: the fill wrote 10 GiB in 168 s (64 MB/s, behind
   the modelled 90 MB/s put), and its sleep took 33.5 s while the backlog
-  drained.
+  drained (148 s and 46.3 s in the rerun).
 - **The canary**, read back on every wake: yes, at both sizes. The key was
   the same on every wake, and the canary was in neither the store nor the
   scratch disk.
 
 **Where Hermes' 14 s go.** One computer, the plain disk, one `hermes chat`
-and then another: **13.0 s cold, 4.1 s warm**. So about 9 s is the first
-read of Hermes' files from the root image. The image disk reads at 215
-MB/s in one stream, but only 3,871 random 4 KiB reads a second (about
-0.26 ms each, one virtio round trip; direct mode was not compared), and
-Python's start is thousands of small reads.
-The rest, 4.1 s, is Hermes' one-shot CLI itself.
+and then another: **13.0 s cold, 4.1 s warm**. The image disk reads at
+215 MB/s in one stream and 3,871 random 4 KiB reads a second
+(`line9-hermes-cold-warm.txt`). *Corrected 2026-11-21:* this section first
+read the 9 s difference as the first read of Hermes' files from the root
+image. The study below shows otherwise: the first `hermes chat` starts
+Hermes' gateway and waits for it, and the root's reads are under a second.
 
 **Beside FPAC's numbers** (its `docs/results.md`): Hermes' first reply was
 8.52 s on Cloudflare and 2.87 s on krun, through Hermes' gateway (its
-boot, then a message). This is a one-shot CLI, a different path
-(deviation 8), so compare the parts. FPAC's open and mount take about
-130 ms here after the key (modelled, one round at S3's 23 ms), against
-0.97 s on Cloudflare (R2's round, about 300 ms). The cold root image is
-the cost Nitro adds. Not built here: reading the boot's working set ahead,
-in parallel with the key and the mount (FPAC's pack does this for its own
-disk), or an image format with larger reads.
+boot, then a message). The one-shot CLI above is a different path
+(deviation 8); the study below measures the gateway's path too. FPAC's
+open and mount take about 130 ms here after the key (modelled, one round
+at S3's 23 ms), against 0.97 s on Cloudflare (R2's round, about 300 ms).
+
+#### Where the cold 9 s go (2026-11-21)
+
+**In plain words:** the 9 s are not reads of the image. They are Hermes
+starting its gateway. The first `hermes chat` after a boot starts Hermes'
+gateway in the background and waits for it, and that start is about 9 s
+of CPU work. No disk setting gets it back. The root's reads cost about
+half a second to a second of the cold start, dm-verity about 0.4 s of
+that, and Nitro's confidential mode about 0.15–0.3 s, most of it the
+boot's firmware (line 2). The earlier reading of this section (that the 9
+s were the first read of Hermes' files) was wrong.
+
+Same parent (`m8g.xlarge`), one fresh computer a sample, 2 vCPUs, 4 GiB,
+line 8's plain disk (no key: this is about the root, not the seal). The
+parent's page cache held the image, as a node serving many computers
+would. Each sample: a cold `hermes chat`, a warm one, then one more after
+dropping the guest's whole page cache. The guest's block counters were
+read around the cold run. The harness is `host/cold-reads.py`. Its
+workload starts from `host/cold-entry.sh`: the image's entrypoint less its
+NSM clock, since a direct sandbox has no NSM. Every row ran that same
+entrypoint. Evidence: `line9-cold-reads.jsonl`.
+
+| Setting | Cold | Warm | Page cache dropped | Root reads in the cold run |
+|---|---|---|---|---|
+| Confidential, dm-verity (as shipped), n = 7 | **12.93 s** (12.61–13.64) | 3.81 s | 4.06 s | 8,172 (131 MB); on the devices 13,659 image + 2,176 tree |
+| Direct mode, n = 3 | 12.77 s (12.55–12.78) | 3.72 s | 3.87 s | the same |
+| No dm-verity (dm-linear), confidential, n = 3 | 12.49 s (12.43–12.69) | 3.80 s | 3.96 s | the same, no tree reads |
+| No dm-verity, direct, n = 3 | 12.38 s (12.34–12.45) | 3.69 s | 3.88 s | the same, no tree reads |
+| Readahead 4 MiB on the root's devices (128 KiB before), n = 3 | 12.60 s (12.51–12.63) | 3.68 s | 3.89 s | 7,722 (170 MB): fewer, larger |
+| dm-verity's hash prefetch 4 MiB (256 KiB before), n = 3 | 13.01 s (12.89–13.01) | 3.67 s | 4.09 s | 8,171 (131 MB), 2,944 tree reads |
+| The working set read ahead, in parallel with the mount, n = 3 | **12.41 s** (12.34–12.52) | 3.83 s | 3.94 s | 840 (4 MB): the rest already read |
+
+- **The reads, counted** (`line9-trace-reads.txt`, Firecracker traced on
+  the parent in one cold run): 13,858 reads of the image (131 MB, 82% of
+  them 4 KiB, none over 1 MiB) and 2,176 of the verity tree (all 4 KiB).
+  About 16,000 round trips. The guest's own counters put the root's
+  summed wait at 0.55–1.8 s per cold run, and each round trip at roughly
+  0.07 ms on the image disk and 0.2 ms on the tree.
+- **Reading every file again costs about 0.2 s.** With the whole page
+  cache dropped, a run takes 3.9–4.1 s against 3.7–3.8 s warm. The
+  cold-only 8.5–8.9 s survives the drop, so it is not the cache.
+- **It is Hermes' gateway** (`line9-first-run-probe.txt`). After the first
+  `hermes chat`, a gateway (`hermes_cli.main gateway run --quiet
+  --idle-exit`, 298 MB) is running that was not there before. It had been
+  running 9 s when the 13 s chat returned. Later runs find it up. The cold
+  run uses 13–15 s of CPU against 3.65 s warm, while Python's imports take
+  0.85 s both times. The CPU is not slower in the sandbox: the same Python
+  loop counts 32.5–36.8 M iterations in 5 s in a guest in either mode, and
+  35.4–36.1 M on the parent itself (`line9-cpu.txt`).
+- **The working set**, recorded once by `mincore` over the root's files
+  after a cold start (the image has no `fincore`): 6,610 files, 273 MB,
+  173 MB of them touched. Read by 16 readers at once from the moment the
+  clock is set, they took 0.43–0.49 s and were done before the chat
+  began. The cold run then read 4–11 MB from the root instead of 131 MB.
+  The gain is 0.5 s.
+- **Not Nitro's, not the disk's:** confidential against direct is 0.16 s
+  cold (with dm-verity) and 0.11 s (without), and the boot to the clock
+  line is 0.16 s longer in confidential mode (858 against 697 ms): line
+  2's firmware. dm-verity against dm-linear is 0.44 s (confidential) and
+  0.39 s (direct).
+
+**The path FPAC measured: Hermes through its gateway** (its image's own
+entrypoint, `gateway run` under s6, its loopback API server; one message
+to `/v1/chat/completions` from the moment the disk is mounted; launch to
+the reply):
+
+| Setting | First reply, normal starts | Starts that waited 10 or 20 s more |
+|---|---|---|
+| As shipped (confidential, dm-verity) | **11.51 s** (11.32–11.70), n = 14 | 4 of 18 |
+| The working set read ahead | 11.04 s (11.03–11.06), n = 2 | 5 of 7 |
+| Direct mode | 11.20 s (11.18–11.21), n = 3 | 3 of 6 |
+
+Where a normal start's 11.5 s go (one start, `line9-gateway-11s.txt`;
+times from Firecracker's spawn):
+
+| Step | At |
+|---|---|
+| The guest's entrypoint starts | 0.72 s |
+| FPAC mounted | 1.10 s |
+| Hermes' container setup (stage2 0.73 s, profile reconcile 0.35 s, s6) | 1.15–2.26 s |
+| The gateway's Python start, to its API server listening | 2.26–7.56 s (**5.3 s**) |
+| The message in (sent as soon as the port answers) | 8.13 s |
+| The first turn (its "turn machinery warmed in 1.4 s", the model call) | 8.13–11.56 s (3.4 s) |
+
+**Beside FPAC's numbers:** 11.5 s here, 8.52 s on Cloudflare and 2.87 s
+on krun. They used a different Hermes (fragment's image and its bridge)
+on other CPUs. Here, nearly all of the gap after the mount is Hermes'
+own start and first turn on this CPU. The root's reads are about 0.5 s of
+it (what reading the working set ahead saved). Nitro's own cost is about
+0.3 s (11.51 s against 11.20 s in direct mode), half of it the boot's
+firmware.
+
+**The 10-second waits** (12 of 31 gateway starts, any setting;
+`line9-gateway-21s.txt`): Hermes' gateway prints its banner on time, then
+nothing for 10 s (20 s twice) before its control socket opens. In that
+gap Hermes' start replaces an existing gateway it finds recorded: SIGTERM
+to the recorded PID, then up to 10 s for it to exit (`_wait_for_pid_exit(
+existing_pid, 20, 0.5)` in `gateway/run_bootstrap.py`), then SIGKILL. In
+a fresh VM a PID recorded by the last life on the persistent disk can
+belong to some other live process. That is the likely cause but it is
+**not confirmed**: in five later starts that checked, `/opt/data/
+gateway.pid` was absent at the mount, and all five ran normally. It is
+Hermes' behaviour on a home that outlives its machine, not this host's.
+
+**What gets the cold 9 s back:** no disk setting. The best of them, the
+working set read ahead, saves 0.5 s. The 9 s are only paid because the
+one-shot CLI starts the gateway on demand. A computer that starts Hermes'
+gateway at its boot, as the gateway path does, pays Hermes' start there
+instead, in the 11.5 s above. Anything still left after that is Hermes,
+not Nitro.
 
 ### Line 10: density and cost (`line10-*.json`, `line10-idle-hermes.txt`)
 
@@ -934,7 +1044,7 @@ round trips".
 | 6 | Our guest | **Pass** |
 | 7 | Network | **Pass**; leak 1 recorded, not fixed |
 | 8 | Sealed disk | **Pass**, the store modelled from measured S3 round trips |
-| 9 | Wake | **Measured**, modelled from measured S3 round trips: the mount is quick, the cold root image is not |
+| 9 | Wake | **Measured**, modelled from measured S3 round trips: the mount is quick; Hermes' own start is most of the rest, the root's reads under a second, Nitro's own share about 0.3 s |
 | 10 | Density and cost | **Measured** on `m8g.2xlarge` |
 | 11 | Build | **Pass** on arm64; x86_64 by CI |
 | 12 | Nothing left behind | **Done as changed**: the bucket removed, the parent stopped, the key kept |
@@ -949,8 +1059,11 @@ round trips".
 - **The store is modelled.** FPAC's folder remote on the parent, with S3's
   measured round trips, stands in for the platform's route and S3 or R2.
   Every line 8 and 9 number that depends on it says so.
-- **Line 9's Hermes is a one-shot CLI**, not a message through its
-  gateway as FPAC measured; the 10 GB wakes are n = 2.
+- **Line 9's gateway path** uses upstream Hermes v0.23.2 and its API
+  server, not fragment's image and bridge as FPAC measured. 12 of 31
+  gateway starts waited 10 or 20 s more inside Hermes' start; its likely
+  cause (a recorded PID reused in a fresh VM) is not confirmed. The study
+  ran on the plain disk, and its clock came from the parent.
 - **The parent can roll a disk back, or swap one**, today: it keeps the
   head and the wrapped keys, and it decides which disk a guest opens. The
   design says what closes it; nothing here does.
