@@ -280,7 +280,7 @@ mod tests {
     fn payload(timestamp: Option<u64>) -> Vec<u8> {
         let mut p = vec![0xbf];
         text(&mut p, "module_id");
-        text(&mut p, "i-00000000000000000-enc0000000000000000");
+        text(&mut p, "a-test-module");
         text(&mut p, "digest");
         text(&mut p, "SHA384");
         if let Some(ms) = timestamp {
