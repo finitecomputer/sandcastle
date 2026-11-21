@@ -68,12 +68,17 @@ pub fn spawn(config: &VmConfig, nitro: &Nitro, console: &Path) -> std::io::Resul
         .spawn()
 }
 
-/// One host-side connection into the guest's agent: `CONNECT 1024` on
-/// Firecracker's vsock, its `OK` read, then a plain stream.
+/// One host-side connection into the guest's agent.
 pub fn connect_agent(vsock: &Path) -> std::io::Result<UnixStream> {
+    connect_port(vsock, sandcastle_wire::PORT_AGENT)
+}
+
+/// One host-side connection to the guest's vsock `port`: `CONNECT <port>`
+/// on Firecracker's vsock, its `OK` read, then a plain stream.
+pub fn connect_port(vsock: &Path, port: u32) -> std::io::Result<UnixStream> {
     let mut s = UnixStream::connect(vsock)?;
     s.set_read_timeout(Some(CONNECT_WAIT))?;
-    s.write_all(format!("CONNECT {}\n", sandcastle_wire::PORT_AGENT).as_bytes())?;
+    s.write_all(format!("CONNECT {port}\n").as_bytes())?;
     // A byte at a time: what follows the answer's newline is the agent's,
     // and a buffered reader would take it.
     let mut line = Vec::new();
@@ -97,7 +102,7 @@ pub fn connect_agent(vsock: &Path) -> std::io::Result<UnixStream> {
 /// half-close on to the guest, so a peer that closed and got only a
 /// half-close would leave the guest's end open, and the guest's agent
 /// (which serves a build one connection at a time) waiting on it.
-fn pump(mut from: UnixStream, to: UnixStream) {
+pub fn pump(mut from: UnixStream, to: UnixStream) {
     let copied = std::io::copy(&mut from, &mut &to);
     if copied.is_err() || peer_closed(&from) {
         let _ = to.shutdown(std::net::Shutdown::Both);
@@ -117,6 +122,14 @@ fn peer_closed(s: &UnixStream) -> bool {
     n == 1 && p.revents & (libc::POLLHUP | libc::POLLERR) != 0
 }
 
+/// Relays `a` and `b` both ways until each way ends.
+pub fn splice(a: UnixStream, b: UnixStream) {
+    let (Ok(a2), Ok(b2)) = (a.try_clone(), b.try_clone()) else { return };
+    let back = std::thread::spawn(move || pump(b2, a2));
+    pump(a, b);
+    let _ = back.join();
+}
+
 /// Serves the agent socket for the VM's life: each connection a relay of
 /// its own into the guest. A connection the guest refuses is dropped, as
 /// libkrun drops one.
@@ -127,10 +140,7 @@ pub fn serve_agent(listener: UnixListener, vsock: std::path::PathBuf) {
         let vsock = vsock.clone();
         let _ = std::thread::Builder::new().name("agent-relay".into()).spawn(move || {
             let Ok(guest) = connect_agent(&vsock) else { return };
-            let (Ok(host2), Ok(guest2)) = (host.try_clone(), guest.try_clone()) else { return };
-            let back = std::thread::spawn(move || pump(guest2, host2));
-            pump(host, guest);
-            let _ = back.join();
+            splice(host, guest);
         });
     }
 }

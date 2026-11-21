@@ -9,6 +9,10 @@ description = "A node's microVM engine on libkrun with Cloudflare's container AP
 name = "sandcastle-engine"
 path = "src/main.rs"
 
+[[bin]]
+name = "sandcastle-bridge"
+path = "src/bridge_main.rs"
+
 [dependencies]
 sandcastle-wire.workspace = true
 sandcastle-vm.workspace = true

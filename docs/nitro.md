@@ -18,6 +18,8 @@ The stack, each a draft PR on `node`:
    Firecracker inside its jail.
 4. **The engine** (`nitro/engine-backend`): the engine picks krun or Nitro
    per node; images become measured roots.
+5. **The bridge** (`nitro/vsock-bridge`): the engine reached from a home
+   that runs in a Nitro Sandbox of its own, over the home's vsock.
 
 ## The guest
 
@@ -148,6 +150,34 @@ krun node.
 - **Capacity:** `memory_mib_max` is the operator's, sized to the pool
   less each sandbox's overheads (2 MiB and 16 MiB a device in confidential
   mode; the spike's line 10).
+
+## The bridge
+
+A home (celld and the cell) may run in a confidential sandbox of its own
+on the parent that runs its computers. celld reaches the engine through
+`sandcastle-bridge`, one binary in two halves, so celld and the engine are
+unchanged:
+
+- **home**, in the home: `engine.sock` and `ports.sock` in `/run/sandcastle`
+  (`CELLD_CONTAINER_ENGINE=krun:/run/sandcastle/engine.sock`). Each
+  connection becomes a vsock stream to the host: port 5000 the engine's
+  API, 5001 `ports.sock`. It listens on its own vsock port 5002 for the
+  intercepts and dials celld's intercept socket (`--intercepts`).
+- **parent**, beside the home's Firecracker: it listens on the home's
+  `<uds>_5000` and `<uds>_5001` (where Firecracker hands the home's dials)
+  and dials the engine, and listens at celld's intercept path on the
+  parent, where the engine dials it, each connection a `CONNECT 5002` into
+  the home.
+
+The API and the intercepts are bytes. `ports.sock` hands a connected
+socket over, which no vsock can carry: the parent takes the engine's
+socket and relays it on the stream the request came on, after the reply
+(framed by its length); the home hands celld one end of a socketpair and
+relays the other, saying `transport: "vsock"` as the engine does of its
+own unix sockets. Every connection is a relay of its own, at most 1024
+live per listener. The intercept path is celld's
+`<data dir>/intercepts-<6 hex of sha256(node)>.sock`: run the home's celld
+with a fixed `CELLD_NODE` and give both halves that path.
 
 ## Evidence
 
