@@ -47,3 +47,34 @@ What a Nitro Sandbox changes for sandcastle's guest, and why:
   later as a TLS error in the workload. The document is read, not
   verified: the guest reads its own NSM, and verifying documents is the
   operator's job (`nsm.rs`).
+
+## Release assets
+
+What a Nitro node runs beside sandcastle's own binaries, each pinned and
+each built the same way every time, because each is measured:
+
+- **The parent** (`nitro/parent-ready.sh`): a fresh Amazon Linux 2023
+  Graviton instance, launched with enclaves on, to ready: kernel 6.18 at
+  6.18.51 or later, the Nitro Enclaves memory pool on its command line,
+  Firecracker v1.18.0 checked against its pinned SHA-256, the build tools,
+  the slot budget, and `/dev/nitro_enclaves` in a group of its own (a udev
+  rule), so a VM's jailed uid opens it as it opens `/dev/kvm` elsewhere.
+  It prints the host's facts as JSON. Idempotent: run, reboot when it says
+  so, run again.
+- **The guest kernel** (`nitro/guest-kernel.sh`): Amazon Linux's 6.18
+  tree at a pinned tag, Firecracker v1.18's CI config, and sandcastle's own
+  lines (the NSM, dm-verity with `dm-mod.create=`, no modules). The build's
+  user, host, time and counter are fixed, so the same source and config
+  make the same bytes (the spike built it twice to the same SHA-256).
+- **The initrd**: the engine makes it at open from its `guest` binary, as
+  it makes the boot disk for libkrun: a newc archive with every owner,
+  mode and time fixed (`sandcastle_rootfs::initrd`), so the same guest
+  makes the same bytes.
+
+PCR0 measures the kernel, the initrd and the command line; the command
+line names the image's verity root hash. So a sandbox's PCR0 is a
+function of the release (kernel and guest), the image's root, and the
+launch's flags. A node builds an image's root in a build VM, as krun
+nodes do, which is not byte-reproducible: two nodes' builds of one image
+give two root hashes, each measured. Publishing one PCR0 per image needs a
+deterministic build of the root; that is not done here.
