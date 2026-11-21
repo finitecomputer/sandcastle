@@ -171,8 +171,8 @@ virtual authenticator (CTAP2, user verification).
 | An invite for an email that has an account | refused |
 | KMS refused an image the policy did not name | refused, then released once its own PCR0 was pinned |
 | A canary written in the home, searched for in the disk files on the parent | data disk **0**; tmpfs 0; the control written to the plain scratch layer: 4,096 |
-| **An agent's first start** (the cell's `start` event: fresh) | its VM ready **141 ms** after the start began; Hermes heard at 2.6 s; its first turn begun at 3.8 s. The greeting then took "8 s, 3 steps" |
-| **The first reply, cold:** from the agent's making in the shell to its greeting | about 12 s |
+| **An agent's first start** (the cell's `start` event, fresh path) | ready at 141 ms in the cell's clock, Hermes heard at 2.6 s, its first turn begun at 3.8 s; lane A's engine reports the VM itself ready 1.3 s after its launch. The greeting then took "8 s, 3 steps" |
+| **The first reply, cold:** from the agent's start to its greeting | about 12 s (3.8 s to its first turn, then 8 s of work) |
 | **A warm reply:** from sending to the reply on the page | **4.1 s** ("worked for 2 to 3 s") |
 | **A wake:** the computer asleep, a message sent, to the reply on the page | **8.1 s**. The cell's `start` event: VM up 1.0 s, data restored from its save (2.7 MB) at 1.3 s, Hermes heard at 1.75 s, its turn begun at 2.9 s |
 | Settings → Restart computer (save, new VM, restore) | Awake again in 5.1 s; the file kept |
