@@ -273,6 +273,9 @@ this engine in Nitro mode, every sandbox confidential.
   build VM applying its five layers and ending, then each sandbox's start
   (ready in about 500 ms) and end.
 
+- `sealed-scratch.md`: the sealed scratch disk: a planted string found
+  0 times on the parent (8,192 with no seal), and the suite's 23 cases
+  that do not snapshot passing on it.
 - `home-computers.md`: a home in a Nitro Sandbox of its own, on the same
   parent, running its computers on this engine through the bridge:
   Fragment's Hermes image (arm64) as a measured root, an agent made and
