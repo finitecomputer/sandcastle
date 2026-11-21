@@ -253,8 +253,8 @@ Each item is with the design PR that closes it
 | # | What | Closed by |
 |---|---|---|
 | 11 | **The engine's egress proxy on the parent reads every intercepted request in plaintext**: the computer's calls to the platform (its turns, its chats' records, the model route) and its saves and restores (`backups.sandbox.internal`, the whole of its `/data`). It then relays them to the home over vsock | PR 8, egress and its intercepts inside the boundary (TLS to the home, ended in the home) |
-| 12 | **The engine can run any command in a computer** (exec over vsock), and picks its image and environment | PR 6, the attested control channel |
-| 13 | The computer's scratch disk is plain on the parent; its `/data` lives in its saves in the bucket, unsealed | PR 7 (scratch), and FPAC's sealed disk in place of the saves (PR 5) |
+| 12 | ~~The engine can run any command in a computer~~ (exec over vsock) | **Closed** 2026-11-21 on the shared parent: each computer is reached over its attested session alone (lane A's PR 6, sandcastle#26), claimed by the home's bridge against the PCR0s the home pins; the parent's own exec is refused ("this guest takes that only over its attested session"). The parent still picks which image it starts, and a start the home has not pinned is refused |
+| 13 | The computer's `/data` lives in its saves in the bucket, unsealed (its scratch disk is sealed since lane A's PR 7, sandcastle#25, on the shared engine) | FPAC's sealed disk in place of the saves (PR 5) |
 | 14 | ~~A home restart reaps its computers without a final save~~ | **Closed** 2026-11-21: the home's stop asks celld to keep its computers running (`POST /shutdown?handoff=preserve&containers=keep`, lane A's celld change), and the next start adopts them. A turn in flight at the stop still loses its model call: its retries fail until its cell is adopted, which waits for the cell to be touched |
 
 Outside the parent:
