@@ -23,6 +23,24 @@ reference celld gives it, its content key:
 | dm-verity format | 33 s, 3,957,903 data blocks |
 | Root hash | `6d07f5dda9c784d98529783be7b86edc02d7e1e0d5111f4453bfcd194c96ff89` |
 
+Its PCRs on this node, from an NSM document read inside a test computer
+of the image (with `nsm-attest.py`, a fresh nonce) and verified down to
+AWS's pinned Nitro root with the spike's `nitro-verify`:
+
+| PCR | Value (SHA-384) |
+|---|---|
+| 0, the image (kernel, command line, initrd, launch flags) | `e8c570c5b167678ffa00e0f55c175a1515567317e127df23961c9b7b429566ecce0493883402310296db78e468055839` |
+| 1, kernel, command line, first initrd | `97131cdeadb8ed7d55e25e4757364206f880754d508c8fb295cc654fb13aeabeb3ffbfd423bffe6b2acea0c8ea83b931` |
+| 2, later initrds | `21b9efbc184807662e966d34f390821309eeac6802309798826296bf3e8bec7c10edb30948c90ba67310f7b964fc500a` |
+| 3, 4 | the parent's role and instance (not recorded here) |
+
+This PCR0 is this node's, not the image's everywhere. The command line
+carries the root's dm-verity hash, and a node builds the root in a build
+VM, which is not byte-reproducible (`docs/nitro.md`, "Release assets").
+Another node's build of the same image gives another root hash, so
+another PCR0. A PCR0 that anyone can check before trusting a computer
+needs the root built the same way everywhere, then published with it.
+
 A bare start of it through the engine (a shell entrypoint, no cell) was
 ready in 1,562 ms cold and 976 ms warm. Inside: `aarch64`, the arm64
 `sandbox-shim` and `hermes-boot` run, Python 3.14.9, and the clock read
