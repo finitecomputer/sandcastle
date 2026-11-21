@@ -24,6 +24,11 @@ same image, the same procedure.
 | Files in the engine's state naming the canary | **0** | 1 (the scratch disk) |
 | The scratch disk's written blocks | 2.3 MB | 2.6 MB |
 
+Then on the parent that runs a home (an m8g.2xlarge), once its engine
+had the seal (installed with no computer running): **0** pairs found, on
+2.3 MB written, where the same parent's control before the seal had found
+8,192.
+
 `canary-scan.sh` is the scan, as run.
 
 ## celld's conformance, sealed
