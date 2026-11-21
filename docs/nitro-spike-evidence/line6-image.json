@@ -1,0 +1,12 @@
+{
+ "image": "/home/ec2-user/nitro/images/hermes.ext4",
+ "hash_tree": "/home/ec2-user/nitro/images/hermes.verity",
+ "hash_start_block": 1,
+ "data_block_bytes": 4096,
+ "data_blocks": 923392,
+ "algorithm": "sha256",
+ "root_hash": "e11682c73d1f170d261e73efbe07b703f6daf419c9abb1a3646825751ee0ba5a",
+ "salt": "6e17f0a50000400080000000000c0de06e17f0a50000400080000000000c0de0",
+ "image_mib": 3607,
+ "tree_bytes": 3055694929
+}

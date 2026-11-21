@@ -1,0 +1,8 @@
+    Checking sandcastle-nitro-spike v0.1.0 (/home/ec2-user/sandcastle/crates/nitro-spike)
+    Checking sandcastle-nitro-probe v0.1.0 (/home/ec2-user/sandcastle/crates/nitro-probe)
+    Checking sandcastle-vm v0.1.0 (/home/ec2-user/sandcastle/crates/vm)
+    Checking sandcastle-egress v0.1.0 (/home/ec2-user/sandcastle/crates/egress)
+    Checking sandcastle-nitro-attest v0.1.0 (/home/ec2-user/sandcastle/crates/nitro-attest)
+    Checking sandcastle-wire v0.1.0 (/home/ec2-user/sandcastle/crates/wire)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.27s
+clippy exit 0

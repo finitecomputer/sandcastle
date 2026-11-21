@@ -1,0 +1,19 @@
+# The home study's celld (docs/nitro-spike.md, "A home"), built on the parent
+# (m8g.xlarge, AL2023, Rust 1.99.0) from github.com/futurepaul/celld's selfhost
+# line at b19f09d: the fork publishes no arm64 celld, only x86_64 rusty_v8
+# archives. Its lock pins the v8 crate 152.1.0 from crates.io, whose build
+# fetched denoland's prebuilt aarch64 V8; the fork's own V8 15.2.124.45 build
+# is x86_64 only, so this celld runs upstream's V8 for that crate.
+$ cargo build --release --locked -p celld        # fat LTO, opt-level "s", stripped
+    Finished `release` profile [optimized] target(s) in 4m 00s
+exit 0 seconds 241
+$ ls -l target/release/celld                     # 64,818,008 bytes
+$ celld --version
+celld 0.6.3
+$ ldd target/release/celld
+	libgcc_s.so.1, libm.so.6, libc.so.6, ld-linux-aarch64.so.1
+# The home's root: debian:bookworm-slim (arm64, pinned by digest), as celld's
+# own release image, plus ca-certificates, curl, procps and the binary
+# (host/home/Dockerfile): 178,435,104 bytes; its verity image 456 MiB.
+# esbuild for `celld deploy`: @esbuild/linux-arm64 0.28.1 from npm, checked
+# against its published sha512 before use.

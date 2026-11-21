@@ -1,0 +1,383 @@
+launched_at 1795224516.809
+replied_at 1795224528.463
+held /run/nitro-spike/held (ready at 722 ms)
+guest +724: nitro: started
+guest +729: nitro: time 1795224516
+guest +734: nitro: key {"plain":true}
+guest +1104: nitro: mounted {"dir":"/opt/data","fpac":"mounted","misses":0,"ms":363.187931,"pack_waits":0,"waited_at":[]}
+guest +1119: /package/admin/s6-overlay/libexec/preinit: info: container permissions: uid=0 (root), euid=0, gid=0 (root), egid=0
+guest +1119: /package/admin/s6-overlay/libexec/preinit: info: /run permissions: uid=0 (root), gid=0 (root), perms=oxorgxgruxuwur
+guest +1146: s6-rc: info: service s6rc-oneshot-runner: starting
+guest +1147: s6-rc: info: service s6rc-oneshot-runner successfully started
+guest +1148: s6-rc: info: service fix-attrs: starting
+guest +1151: s6-rc: info: service fix-attrs successfully started
+guest +1151: s6-rc: info: service legacy-cont-init: starting
+guest +1152: cont-init: info: running /etc/cont-init.d/01-hermes-setup
+guest +1622: [stage2] dependency environment: base
+guest +1622: [stage2] collected 0 unused dependency generations
+guest +1712: Syncing bundled skills into ~/.hermes/skills/ ...
+guest +1868: 
+guest +1870: Done: 0 new, 0 updated, 44 unchanged. 44 total bundled.
+guest +1882: [stage2] Using pinned Chromium binary: /opt/hermes/tools/chromium-1248/chrome-linux-arm64/chrome
+guest +1882: [stage2] Setup complete; starting user services
+guest +1882: cont-init: info: /etc/cont-init.d/01-hermes-setup exited 0
+guest +1882: cont-init: info: running /etc/cont-init.d/015-supervise-perms
+guest +1891: [supervise-perms] static s6-rc services: supervise/ readable/controllable by group hermes
+guest +1891: cont-init: info: /etc/cont-init.d/015-supervise-perms exited 0
+guest +1891: cont-init: info: running /etc/cont-init.d/02-reconcile-profiles
+guest +2221: reconcile: profile=default prior_state=running action=started
+guest +2243: cont-init: info: /etc/cont-init.d/02-reconcile-profiles exited 0
+guest +2244: s6-rc: info: service legacy-cont-init successfully started
+guest +2244: s6-rc: info: service profile-gateways: starting
+guest +2244: s6-rc: info: service main-hermes: starting
+guest +2244: s6-rc: info: service dashboard: starting
+guest +2254: s6-rc: info: service profile-gateways successfully started
+guest +2254: s6-rc: info: service main-hermes successfully started
+guest +2254: s6-rc: info: service dashboard successfully started
+guest +2255: s6-rc: info: service legacy-services: starting
+guest +2261: s6-rc: info: service legacy-services successfully started
+guest +3602: ⚠ install out of sync (pnpm: not installed or outdated) — this docker-managed install must rebuild the artifact to fix
+guest +3623: ⚠ install out of sync (pnpm: not installed or outdated) — this docker-managed install must rebuild the artifact to fix
+guest +4151: → gateway is now running under s6 supervision (auto-restart on crash,
+guest +4151:   dashboard supervised alongside if HERMES_DASHBOARD is set).
+guest +4151:   This is the recommended setup for the s6 container image — the
+guest +4151:   gateway will keep running even if it crashes.
+guest +4151:   Use `--no-supervise` (or HERMES_GATEWAY_NO_SUPERVISE=1) to opt out
+guest +4151:   and get the pre-s6 foreground behavior instead.
+guest +5688: ┌─────────────────────────────────────────────────────────┐
+guest +5688: │           ☤ Hermes Gateway Starting...                 │
+guest +5688: ├─────────────────────────────────────────────────────────┤
+guest +5688: │  Messaging platforms + cron scheduler                    │
+guest +5688: │  Press Ctrl+C to stop                                   │
+guest +5688: └─────────────────────────────────────────────────────────┘
+guest +5688: 
+guest +8435: 2026-11-21 01:28:43,705 WARNING agent.model_metadata: Could not determine context length for model 'stand-in' (base_url=http://model.example.com/v1) — falling back to 256,000 tokens. Set model.context_length in config.yaml to override.
+
+== /opt/data/logs/gateways/default/current
+2026-11-21 01:23:51.860656117  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:23:51.860672389  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:23:51.860674548  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:23:51.860678738  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:23:51.860679747  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:23:51.860680911  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:23:51.860683501  
+2026-11-21 01:24:06.823465327  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:24:06.823481896  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:24:06.823483976  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:24:06.823488371  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:24:06.823489379  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:24:06.823490457  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:24:06.823493090  
+2026-11-21 01:24:32.843512331  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:24:32.843529688  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:24:32.843531881  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:24:32.843536354  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:24:32.843537388  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:24:32.843538489  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:24:32.843541351  
+2026-11-21 01:24:57.805053829  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:24:57.805069988  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:24:57.805071979  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:24:57.805076664  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:24:57.805077668  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:24:57.805078782  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:24:57.805081735  
+2026-11-21 01:25:22.783363097  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:25:22.783383605  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:25:22.783385515  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:25:22.783390776  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:25:22.783391779  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:25:22.783392885  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:25:22.783395786  
+2026-11-21 01:25:37.764683150  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:25:37.764704215  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:25:37.764706103  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:25:37.764714724  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:25:37.764715782  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:25:37.764716904  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:25:37.764719562  
+2026-11-21 01:26:02.815793322  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:26:02.815810474  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:26:02.815812380  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:26:02.815817417  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:26:02.815818380  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:26:02.816173933  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:26:02.816175950  
+2026-11-21 01:26:27.886384362  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:26:27.886401110  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:26:27.886403172  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:26:27.886407797  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:26:27.886408813  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:26:27.886409933  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:26:27.886412509  
+2026-11-21 01:26:52.814018257  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:26:52.814036094  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:26:52.814038103  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:26:52.814042819  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:26:52.814043846  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:26:52.814044929  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:26:52.814400359  
+2026-11-21 01:27:17.959491716  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:27:17.959511394  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:27:17.959513694  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:27:17.959518441  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:27:17.959519440  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:27:17.959867031  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:27:17.959868966  
+2026-11-21 01:28:25.871571373  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:28:25.871588098  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:28:25.871590130  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:28:25.871594704  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:28:25.871595741  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:28:25.871596844  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:28:25.871599766  
+2026-11-21 01:28:40.958114903  ┌─────────────────────────────────────────────────────────┐
+2026-11-21 01:28:40.958644446  │           ☤ Hermes Gateway Starting...                 │
+2026-11-21 01:28:40.958646514  ├─────────────────────────────────────────────────────────┤
+2026-11-21 01:28:40.958648300  │  Messaging platforms + cron scheduler                    │
+2026-11-21 01:28:40.958649710  │  Press Ctrl+C to stop                                   │
+2026-11-21 01:28:40.958657136  └─────────────────────────────────────────────────────────┘
+2026-11-21 01:28:40.958657950  
+== /opt/data/logs/gateway.log
+2026-11-21 01:27:04,176 INFO gateway.run: Previous gateway exited cleanly — skipping session suspension
+2026-11-21 01:27:04,576 INFO gateway.run: Connecting to api_server...
+2026-11-21 01:27:04,595 INFO gateway.platforms.api_server: [Api_Server] API server listening on http://127.0.0.1:8642 (model: hermes-agent)
+2026-11-21 01:27:04,646 INFO gateway.run: ✓ api_server connected
+2026-11-21 01:27:04,917 INFO gateway.run: Gateway running with 1 platform(s)
+2026-11-21 01:27:04,965 INFO gateway.run: Channel directory built: 0 target(s)
+2026-11-21 01:27:05,102 INFO gateway.run: inbound message: platform=api_server user=h:4b225ff1ef chat=h:e672268457 msg_len=10 reply_to_id=None
+2026-11-21 01:27:05,959 INFO gateway.run: Model context warmed: stand-in -> 256000 tokens (default)
+2026-11-21 01:27:05,961 INFO gateway.run: Turn machinery warmed in 1.4s (19 tool schema(s) materialized)
+2026-11-21 01:27:06,059 INFO gateway.run: Press Ctrl+C to stop
+2026-11-21 01:27:06,067 INFO gateway.run: kanban dispatcher: holding singleton dispatcher lock (/opt/data/kanban/.dispatcher.lock)
+2026-11-21 01:27:06,067 INFO gateway.run: kanban dispatcher: kanban.max_in_progress unset; using memory-derived default max_in_progress=7 (set kanban.max_in_progress in config.yaml to override)
+2026-11-21 01:27:06,086 INFO gateway.run: Cron scheduler will tick 1 profile(s): ['default']
+2026-11-21 01:27:06,109 INFO gateway.run: Gateway housekeeping started (interval=60s)
+2026-11-21 01:27:08,652 INFO gateway.run: response ready: platform=api_server chat=api-a46d5df2789d4c01 session=agent:main:api_server:dm:api-a46d5df2789d4c01 time=3.6s api_calls=1 response=65 chars
+2026-11-21 01:27:08,767 INFO gateway.run: Received SIGTERM — initiating shutdown
+2026-11-21 01:27:08,767 WARNING gateway.run: Shutdown context: signal=SIGTERM under_systemd=no supervisor=none parent_pid=403 parent_name=s6-supervise loadavg_1m=0.36
+2026-11-21 01:27:08,772 INFO gateway.run: Stopping gateway...
+2026-11-21 01:27:08,778 INFO gateway.run: Shutdown phase: notify_active_sessions done at +0.01s
+2026-11-21 01:27:08,782 INFO gateway.run: Shutdown phase: drain done at +0.01s (drain took 0.00s, timed_out=False, active_at_start=0, active_now=0, cron_at_start=0, cron_now=0, api_at_start=0, api_now=0, deferred_at_start=0, deferred_now=0, deleg_at_start=0, deleg_now=0)
+2026-11-21 01:27:08,987 INFO gateway.platforms.api_server: [Api_Server] API server stopped
+2026-11-21 01:27:08,987 INFO gateway.run: ✓ api_server disconnected (0.03s)
+2026-11-21 01:27:08,987 INFO gateway.run: Shutdown phase: all adapters disconnected at +0.21s
+2026-11-21 01:27:08,999 INFO gateway.run: Shutdown phase: final-cleanup tool kill done at +0.23s
+2026-11-21 01:27:09,000 INFO gateway.run: Shutdown phase: executor quiesced at +0.23s
+2026-11-21 01:27:09,004 INFO gateway.run: Shutdown phase: SessionDB close done at +0.23s
+2026-11-21 01:27:09,005 INFO gateway.run: Gateway stopped by an unexpected signal — persisting gateway_state=running so container_boot auto-starts on the next boot (issue #42675)
+2026-11-21 01:27:09,007 INFO gateway.run: Gateway stopped (total teardown 0.23s)
+2026-11-21 01:27:09,008 INFO gateway.run: Gateway housekeeping stopped (idle-task runs settled: True)
+2026-11-21 01:27:09,108 INFO gateway.run: Exiting with code 1 (signal-initiated shutdown without restart request) so the service manager can revive the gateway.
+2026-11-21 01:27:28,837 INFO gateway.control_socket: Gateway control socket listening at /opt/data/gateway.sock
+2026-11-21 01:27:29,257 INFO gateway.run: Starting Hermes Gateway...
+2026-11-21 01:27:29,260 INFO gateway.run: Session storage: /opt/data/sessions
+2026-11-21 01:27:29,264 INFO gateway.run: Agent budget: max_iterations=unlimited (agent.max_turns from config.yaml, else the HERMES_MAX_ITERATIONS bridge)
+2026-11-21 01:27:29,265 INFO gateway.run: Secret redaction: ENABLED (tool output, logs, and chat responses are scrubbed before delivery)
+2026-11-21 01:27:29,313 INFO gateway.run: Previous gateway exited cleanly — skipping session suspension
+2026-11-21 01:27:29,708 INFO gateway.run: Connecting to api_server...
+2026-11-21 01:27:29,726 INFO gateway.platforms.api_server: [Api_Server] API server listening on http://127.0.0.1:8642 (model: hermes-agent)
+2026-11-21 01:27:29,773 INFO gateway.run: ✓ api_server connected
+2026-11-21 01:27:30,089 INFO gateway.run: Gateway running with 1 platform(s)
+2026-11-21 01:27:30,138 INFO gateway.run: Channel directory built: 0 target(s)
+2026-11-21 01:27:30,273 INFO gateway.run: inbound message: platform=api_server user=h:4b225ff1ef chat=h:e672268457 msg_len=10 reply_to_id=None
+2026-11-21 01:27:31,050 INFO gateway.run: Model context warmed: stand-in -> 256000 tokens (default)
+2026-11-21 01:27:31,051 INFO gateway.run: Turn machinery warmed in 1.3s (19 tool schema(s) materialized)
+2026-11-21 01:27:31,216 INFO gateway.run: Press Ctrl+C to stop
+2026-11-21 01:27:31,222 INFO gateway.run: kanban dispatcher: holding singleton dispatcher lock (/opt/data/kanban/.dispatcher.lock)
+2026-11-21 01:27:31,223 INFO gateway.run: kanban dispatcher: kanban.max_in_progress unset; using memory-derived default max_in_progress=7 (set kanban.max_in_progress in config.yaml to override)
+2026-11-21 01:27:31,242 INFO gateway.run: Cron scheduler will tick 1 profile(s): ['default']
+2026-11-21 01:27:31,267 INFO gateway.run: Gateway housekeeping started (interval=60s)
+2026-11-21 01:27:33,732 INFO gateway.run: response ready: platform=api_server chat=api-a46d5df2789d4c01 session=agent:main:api_server:dm:api-a46d5df2789d4c01 time=3.5s api_calls=1 response=65 chars
+2026-11-21 01:27:33,798 INFO gateway.run: Received SIGTERM — initiating shutdown
+2026-11-21 01:27:33,798 WARNING gateway.run: Shutdown context: signal=SIGTERM under_systemd=no supervisor=none parent_pid=419 parent_name=s6-supervise loadavg_1m=0.20
+2026-11-21 01:27:33,801 INFO gateway.run: Stopping gateway...
+2026-11-21 01:27:33,818 INFO gateway.run: Shutdown phase: notify_active_sessions done at +0.02s
+2026-11-21 01:27:33,821 INFO gateway.run: Shutdown phase: drain done at +0.02s (drain took 0.00s, timed_out=False, active_at_start=0, active_now=0, cron_at_start=0, cron_now=0, api_at_start=0, api_now=0, deferred_at_start=0, deferred_now=0, deleg_at_start=0, deleg_now=0)
+2026-11-21 01:27:33,932 INFO gateway.platforms.api_server: [Api_Server] API server stopped
+2026-11-21 01:27:33,932 INFO gateway.run: ✓ api_server disconnected (0.00s)
+2026-11-21 01:27:33,933 INFO gateway.run: Shutdown phase: all adapters disconnected at +0.13s
+2026-11-21 01:27:33,944 INFO gateway.run: Shutdown phase: final-cleanup tool kill done at +0.14s
+2026-11-21 01:27:33,945 INFO gateway.run: Shutdown phase: executor quiesced at +0.14s
+2026-11-21 01:27:33,949 INFO gateway.run: Shutdown phase: SessionDB close done at +0.15s
+2026-11-21 01:27:33,950 INFO gateway.run: Gateway stopped by an unexpected signal — persisting gateway_state=running so container_boot auto-starts on the next boot (issue #42675)
+2026-11-21 01:27:33,952 INFO gateway.run: Gateway stopped (total teardown 0.15s)
+2026-11-21 01:27:33,953 INFO gateway.run: Gateway housekeeping stopped (idle-task runs settled: True)
+2026-11-21 01:27:34,054 INFO gateway.run: Exiting with code 1 (signal-initiated shutdown without restart request) so the service manager can revive the gateway.
+2026-11-21 01:28:26,742 INFO gateway.control_socket: Gateway control socket listening at /opt/data/gateway.sock
+2026-11-21 01:28:27,143 INFO gateway.run: Starting Hermes Gateway...
+2026-11-21 01:28:27,146 INFO gateway.run: Session storage: /opt/data/sessions
+2026-11-21 01:28:27,151 INFO gateway.run: Agent budget: max_iterations=unlimited (agent.max_turns from config.yaml, else the HERMES_MAX_ITERATIONS bridge)
+2026-11-21 01:28:27,151 INFO gateway.run: Secret redaction: ENABLED (tool output, logs, and chat responses are scrubbed before delivery)
+2026-11-21 01:28:27,220 INFO gateway.run: Previous gateway exited cleanly — skipping session suspension
+2026-11-21 01:28:27,641 INFO gateway.run: Connecting to api_server...
+2026-11-21 01:28:27,668 INFO gateway.platforms.api_server: [Api_Server] API server listening on http://127.0.0.1:8642 (model: hermes-agent)
+2026-11-21 01:28:27,719 INFO gateway.run: ✓ api_server connected
+2026-11-21 01:28:28,084 INFO gateway.run: Gateway running with 1 platform(s)
+2026-11-21 01:28:28,099 INFO gateway.run: Channel directory built: 0 target(s)
+2026-11-21 01:28:28,258 INFO gateway.run: inbound message: platform=api_server user=h:4b225ff1ef chat=h:e672268457 msg_len=10 reply_to_id=None
+2026-11-21 01:28:29,010 INFO gateway.run: Model context warmed: stand-in -> 256000 tokens (default)
+2026-11-21 01:28:29,011 INFO gateway.run: Turn machinery warmed in 1.4s (19 tool schema(s) materialized)
+2026-11-21 01:28:29,172 INFO gateway.run: Press Ctrl+C to stop
+2026-11-21 01:28:29,179 INFO gateway.run: kanban dispatcher: holding singleton dispatcher lock (/opt/data/kanban/.dispatcher.lock)
+2026-11-21 01:28:29,180 INFO gateway.run: kanban dispatcher: kanban.max_in_progress unset; using memory-derived default max_in_progress=7 (set kanban.max_in_progress in config.yaml to override)
+2026-11-21 01:28:29,201 INFO gateway.run: Cron scheduler will tick 1 profile(s): ['default']
+2026-11-21 01:28:29,221 INFO gateway.run: Gateway housekeeping started (interval=60s)
+2026-11-21 01:28:31,813 INFO gateway.run: response ready: platform=api_server chat=api-a46d5df2789d4c01 session=agent:main:api_server:dm:api-a46d5df2789d4c01 time=3.6s api_calls=1 response=65 chars
+2026-11-21 01:28:32,003 INFO gateway.run: Received SIGTERM — initiating shutdown
+2026-11-21 01:28:32,003 WARNING gateway.run: Shutdown context: signal=SIGTERM under_systemd=no supervisor=none parent_pid=417 parent_name=s6-supervise loadavg_1m=0.23
+2026-11-21 01:28:32,007 INFO gateway.run: Stopping gateway...
+2026-11-21 01:28:32,011 INFO gateway.run: Shutdown phase: notify_active_sessions done at +0.00s
+2026-11-21 01:28:32,014 INFO gateway.run: Shutdown phase: drain done at +0.01s (drain took 0.00s, timed_out=False, active_at_start=0, active_now=0, cron_at_start=0, cron_now=0, api_at_start=0, api_now=0, deferred_at_start=0, deferred_now=0, deleg_at_start=0, deleg_now=0)
+2026-11-21 01:28:32,127 INFO gateway.platforms.api_server: [Api_Server] API server stopped
+2026-11-21 01:28:32,127 INFO gateway.run: ✓ api_server disconnected (0.00s)
+2026-11-21 01:28:32,127 INFO gateway.run: Shutdown phase: all adapters disconnected at +0.12s
+2026-11-21 01:28:32,139 INFO gateway.run: Shutdown phase: final-cleanup tool kill done at +0.13s
+2026-11-21 01:28:32,140 INFO gateway.run: Shutdown phase: executor quiesced at +0.13s
+2026-11-21 01:28:32,144 INFO gateway.run: Shutdown phase: SessionDB close done at +0.14s
+2026-11-21 01:28:32,145 INFO gateway.run: Gateway stopped by an unexpected signal — persisting gateway_state=running so container_boot auto-starts on the next boot (issue #42675)
+2026-11-21 01:28:32,148 INFO gateway.run: Gateway stopped (total teardown 0.14s)
+2026-11-21 01:28:32,148 INFO gateway.run: Gateway housekeeping stopped (idle-task runs settled: True)
+2026-11-21 01:28:32,249 INFO gateway.run: Exiting with code 1 (signal-initiated shutdown without restart request) so the service manager can revive the gateway.
+2026-11-21 01:28:41,908 INFO gateway.control_socket: Gateway control socket listening at /opt/data/gateway.sock
+2026-11-21 01:28:42,354 INFO gateway.run: Starting Hermes Gateway...
+2026-11-21 01:28:42,357 INFO gateway.run: Session storage: /opt/data/sessions
+2026-11-21 01:28:42,362 INFO gateway.run: Agent budget: max_iterations=unlimited (agent.max_turns from config.yaml, else the HERMES_MAX_ITERATIONS bridge)
+2026-11-21 01:28:42,362 INFO gateway.run: Secret redaction: ENABLED (tool output, logs, and chat responses are scrubbed before delivery)
+2026-11-21 01:28:42,409 INFO gateway.run: Previous gateway exited cleanly — skipping session suspension
+2026-11-21 01:28:42,814 INFO gateway.run: Connecting to api_server...
+2026-11-21 01:28:42,833 INFO gateway.platforms.api_server: [Api_Server] API server listening on http://127.0.0.1:8642 (model: hermes-agent)
+2026-11-21 01:28:42,892 INFO gateway.run: ✓ api_server connected
+2026-11-21 01:28:43,224 INFO gateway.run: Gateway running with 1 platform(s)
+2026-11-21 01:28:43,257 INFO gateway.run: Channel directory built: 0 target(s)
+2026-11-21 01:28:43,403 INFO gateway.run: inbound message: platform=api_server user=h:4b225ff1ef chat=h:e672268457 msg_len=10 reply_to_id=None
+2026-11-21 01:28:44,174 INFO gateway.run: Model context warmed: stand-in -> 256000 tokens (default)
+2026-11-21 01:28:44,175 INFO gateway.run: Turn machinery warmed in 1.4s (19 tool schema(s) materialized)
+2026-11-21 01:28:44,323 INFO gateway.run: Press Ctrl+C to stop
+2026-11-21 01:28:44,331 INFO gateway.run: kanban dispatcher: holding singleton dispatcher lock (/opt/data/kanban/.dispatcher.lock)
+2026-11-21 01:28:44,332 INFO gateway.run: kanban dispatcher: kanban.max_in_progress unset; using memory-derived default max_in_progress=7 (set kanban.max_in_progress in config.yaml to override)
+2026-11-21 01:28:44,351 INFO gateway.run: Cron scheduler will tick 1 profile(s): ['default']
+2026-11-21 01:28:44,373 INFO gateway.run: Gateway housekeeping started (interval=60s)
+2026-11-21 01:28:46,830 INFO gateway.run: response ready: platform=api_server chat=api-a46d5df2789d4c01 session=agent:main:api_server:dm:api-a46d5df2789d4c01 time=3.4s api_calls=1 response=65 chars
+== /opt/data/logs/agent.log
+2026-11-21 01:28:28,552 INFO agent.model_metadata: Could not detect context length for model 'stand-in' at http://model.example.com/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-21 01:28:28,552 WARNING agent.model_metadata: Could not determine context length for model 'stand-in' (base_url=http://model.example.com/v1) — falling back to 256,000 tokens. Set model.context_length in config.yaml to override.
+2026-11-21 01:28:28,627 INFO agent.auxiliary_client: Vision auto-detect: using main provider custom (stand-in)
+2026-11-21 01:28:28,982 INFO agent.model_metadata: Could not detect context length for model 'stand-in' at http://model.example.com/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-21 01:28:28,991 INFO tools.tool_search: tool_search activated (tier 1): 16 core/visible tools kept, 7 deferred (~5523 tokens), listing full (budget ~4000 tokens)
+2026-11-21 01:28:29,009 INFO agent.model_metadata: Could not detect context length for model 'stand-in' at http://model.example.com/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-21 01:28:29,010 INFO gateway.run: Model context warmed: stand-in -> 256000 tokens (default)
+2026-11-21 01:28:29,011 INFO gateway.run: Turn machinery warmed in 1.4s (19 tool schema(s) materialized)
+2026-11-21 01:28:29,172 INFO gateway.run: Press Ctrl+C to stop
+2026-11-21 01:28:29,179 INFO gateway.run: kanban dispatcher: holding singleton dispatcher lock (/opt/data/kanban/.dispatcher.lock)
+2026-11-21 01:28:29,180 INFO gateway.run: kanban dispatcher: kanban.max_in_progress unset; using memory-derived default max_in_progress=7 (set kanban.max_in_progress in config.yaml to override)
+2026-11-21 01:28:29,201 INFO gateway.run: Cron scheduler will tick 1 profile(s): ['default']
+2026-11-21 01:28:29,208 INFO cron.scheduler_provider: In-process cron scheduler started (interval=60s)
+2026-11-21 01:28:29,211 INFO cron.scheduler_provider: Multiplex cron scheduler started for 1 profile(s): ['default'] (re-enumerated every cycle)
+2026-11-21 01:28:29,221 INFO gateway.run: Gateway housekeeping started (interval=60s)
+2026-11-21 01:28:29,332 INFO hermes_cli.mem_trim: memory trim: reason=messaging gateway housekeeping malloc_trim=1 collected=False rss_kib=225920->214372 rss_anon_kib=201968->190420 threads=17 duration_ms=2.3
+2026-11-21 01:28:30,601 INFO hermes_cli.web_server: Mounted plugin API routes: /api/plugins/hermes-achievements/
+2026-11-21 01:28:30,680 INFO hermes_cli.web_server: Mounted plugin API routes: /api/plugins/kanban/
+2026-11-21 01:28:30,715 INFO run_agent: OpenAI client created (agent_init, shared=True) thread=hermes-gateway_1:281473578602848 provider=custom base_url=http://model.example.com/v1 model=stand-in
+2026-11-21 01:28:30,733 INFO agent.model_metadata: Could not detect context length for model 'stand-in' at http://model.example.com/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-21 01:28:30,734 INFO tools.tool_search: tool_search activated (tier 1): 15 core/visible tools kept, 6 deferred (~5153 tokens), listing full (budget ~4000 tokens)
+2026-11-21 01:28:30,761 INFO agent.model_metadata: Could not detect context length for model 'stand-in' at http://model.example.com/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-21 01:28:30,941 INFO [api-a46d5df2789d4c01] agent.turn_context: conversation turn: session=api-a46d5df2789d4c01 model=stand-in provider=custom platform=api_server history=0 msg='Say hello.'
+2026-11-21 01:28:31,162 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-4 (<lambda>):281473066070368 provider=custom base_url=http://model.example.com/v1 model=stand-in
+2026-11-21 01:28:31,757 INFO [api-a46d5df2789d4c01] agent.conversation_loop: API call #1: model=stand-in provider=custom in=? out=? total=? latency=0.7s usage=unavailable
+2026-11-21 01:28:31,773 INFO [api-a46d5df2789d4c01] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=stand-in api_calls=1/9223372036854775807 budget=1/9223372036854775807 tool_turns=0 last_msg_role=assistant response_len=65 session=api-a46d5df2789d4c01
+2026-11-21 01:28:31,813 INFO gateway.run: response ready: platform=api_server chat=api-a46d5df2789d4c01 session=agent:main:api_server:dm:api-a46d5df2789d4c01 time=3.6s api_calls=1 response=65 chars
+2026-11-21 01:28:31,889 INFO aiohttp.access: 127.0.0.1 [21/Nov/2026:01:28:27 +0000] "POST /v1/chat/completions HTTP/1.1" 200 870 "-" "curl/8.14.1"
+2026-11-21 01:28:32,003 INFO gateway.run: Received SIGTERM — initiating shutdown
+2026-11-21 01:28:32,003 WARNING gateway.run: Shutdown context: signal=SIGTERM under_systemd=no supervisor=none parent_pid=417 parent_name=s6-supervise loadavg_1m=0.23
+2026-11-21 01:28:32,007 INFO gateway.run: Stopping gateway...
+2026-11-21 01:28:32,011 INFO gateway.run: Shutdown phase: notify_active_sessions done at +0.00s
+2026-11-21 01:28:32,014 INFO gateway.run: Shutdown phase: drain done at +0.01s (drain took 0.00s, timed_out=False, active_at_start=0, active_now=0, cron_at_start=0, cron_now=0, api_at_start=0, api_now=0, deferred_at_start=0, deferred_now=0, deleg_at_start=0, deleg_now=0)
+2026-11-21 01:28:32,124 INFO run_agent: OpenAI client closed (agent_close, shared=True, tcp_force_closed=0) thread=hermes-gateway-hk_0:281473180954976 provider=custom base_url=http://model.example.com/v1 model=stand-in
+2026-11-21 01:28:32,124 INFO run_agent: OpenAI client closed (agent_close, shared=False, tcp_force_closed=0) thread=hermes-gateway-hk_0:281473180954976 provider=custom base_url=http://model.example.com/v1 model=stand-in
+2026-11-21 01:28:32,127 INFO gateway.platforms.api_server: [Api_Server] API server stopped
+2026-11-21 01:28:32,127 INFO gateway.run: ✓ api_server disconnected (0.00s)
+2026-11-21 01:28:32,127 INFO gateway.run: Shutdown phase: all adapters disconnected at +0.12s
+2026-11-21 01:28:32,139 INFO gateway.run: Shutdown phase: final-cleanup tool kill done at +0.13s
+2026-11-21 01:28:32,140 INFO gateway.run: Shutdown phase: executor quiesced at +0.13s
+2026-11-21 01:28:32,144 INFO gateway.run: Shutdown phase: SessionDB close done at +0.14s
+2026-11-21 01:28:32,145 INFO gateway.run: Gateway stopped by an unexpected signal — persisting gateway_state=running so container_boot auto-starts on the next boot (issue #42675)
+2026-11-21 01:28:32,148 INFO gateway.run: Gateway stopped (total teardown 0.14s)
+2026-11-21 01:28:32,148 INFO gateway.run: Gateway housekeeping stopped (idle-task runs settled: True)
+2026-11-21 01:28:32,249 INFO gateway.run: Exiting with code 1 (signal-initiated shutdown without restart request) so the service manager can revive the gateway.
+2026-11-21 01:28:39,689 INFO hermes_cli.plugins: Plugin 'browser-browser-use' registered browser provider: browser-use
+2026-11-21 01:28:39,716 INFO hermes_cli.plugins: Plugin 'browser-browserbase' registered browser provider: browserbase
+2026-11-21 01:28:39,722 INFO hermes_cli.plugins: Plugin 'browser-firecrawl' registered browser provider: firecrawl
+2026-11-21 01:28:40,078 INFO hermes_cli.plugins: Plugin 'default' registered delegation provider: default
+2026-11-21 01:28:40,094 INFO hermes_cli.plugins: Plugin 'deepinfra' registered image_gen provider: deepinfra
+2026-11-21 01:28:40,098 INFO hermes_cli.plugins: Plugin 'fal' registered image_gen provider: fal
+2026-11-21 01:28:40,109 INFO hermes_cli.plugins: Plugin 'krea' registered image_gen provider: krea
+2026-11-21 01:28:40,113 INFO hermes_cli.plugins: Plugin 'meta-ai-image-gen' registered image_gen provider: meta-ai
+2026-11-21 01:28:40,121 INFO hermes_cli.plugins: Plugin 'openai' registered image_gen provider: openai
+2026-11-21 01:28:40,137 INFO hermes_cli.plugins: Plugin 'openai-codex' registered image_gen provider: openai-codex
+2026-11-21 01:28:40,154 INFO hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: openrouter
+2026-11-21 01:28:40,161 INFO hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: nous
+2026-11-21 01:28:40,172 INFO hermes_cli.plugins: Plugin 'xai' registered image_gen provider: xai
+2026-11-21 01:28:40,401 INFO hermes_cli.plugins: Plugin 'deepinfra' registered video_gen provider: deepinfra
+2026-11-21 01:28:40,421 INFO hermes_cli.plugins: Plugin 'fal' registered video_gen provider: fal
+2026-11-21 01:28:40,431 INFO hermes_cli.plugins: Plugin 'openrouter' registered video_gen provider: openrouter
+2026-11-21 01:28:40,439 INFO hermes_cli.plugins: Plugin 'xai' registered video_gen provider: xai
+2026-11-21 01:28:40,491 INFO hermes_cli.plugins: Plugin 'web-brave-free' registered web provider: brave-free
+2026-11-21 01:28:40,495 INFO hermes_cli.plugins: Plugin 'web-ddgs' registered web provider: ddgs
+2026-11-21 01:28:40,508 INFO hermes_cli.plugins: Plugin 'web-exa' registered web provider: exa
+2026-11-21 01:28:40,528 INFO hermes_cli.plugins: Plugin 'web-firecrawl' registered web provider: firecrawl
+2026-11-21 01:28:40,543 INFO hermes_cli.plugins: Plugin 'web-keenable' registered web provider: keenable
+2026-11-21 01:28:40,548 INFO hermes_cli.plugins: Plugin 'web-openai-native' registered web provider: openai-native
+2026-11-21 01:28:40,560 INFO hermes_cli.plugins: Plugin 'web-parallel' registered web provider: parallel
+2026-11-21 01:28:40,566 INFO hermes_cli.plugins: Plugin 'web-perplexity' registered web provider: perplexity
+2026-11-21 01:28:40,576 INFO hermes_cli.plugins: Plugin 'web-searxng' registered web provider: searxng
+2026-11-21 01:28:40,591 INFO hermes_cli.plugins: Plugin 'web-tavily' registered web provider: tavily
+2026-11-21 01:28:40,606 INFO hermes_cli.plugins: Plugin 'web-xai' registered web provider: xai
+2026-11-21 01:28:40,620 INFO hermes_cli.plugins: Plugin discovery complete: 62 found, 58 enabled
+2026-11-21 01:28:40,993 INFO hermes_cli.gateway_multiplex_mode: Single-profile install: gateway.multiplex_profiles unset, serving the default profile only.
+2026-11-21 01:28:41,908 INFO gateway.control_socket: Gateway control socket listening at /opt/data/gateway.sock
+2026-11-21 01:28:42,354 INFO gateway.run: Starting Hermes Gateway...
+2026-11-21 01:28:42,357 INFO gateway.run: Session storage: /opt/data/sessions
+2026-11-21 01:28:42,362 INFO gateway.run: Agent budget: max_iterations=unlimited (agent.max_turns from config.yaml, else the HERMES_MAX_ITERATIONS bridge)
+2026-11-21 01:28:42,362 INFO gateway.run: Secret redaction: ENABLED (tool output, logs, and chat responses are scrubbed before delivery)
+2026-11-21 01:28:42,409 INFO gateway.run: Previous gateway exited cleanly — skipping session suspension
+2026-11-21 01:28:42,814 INFO gateway.run: Connecting to api_server...
+2026-11-21 01:28:42,833 INFO gateway.platforms.api_server: [Api_Server] API server listening on http://127.0.0.1:8642 (model: hermes-agent)
+2026-11-21 01:28:42,834 INFO run_agent: Loaded environment variables from /opt/data/.env
+2026-11-21 01:28:42,892 INFO gateway.run: ✓ api_server connected
+2026-11-21 01:28:43,224 INFO gateway.run: Gateway running with 1 platform(s)
+2026-11-21 01:28:43,257 INFO gateway.run: Channel directory built: 0 target(s)
+2026-11-21 01:28:43,403 INFO gateway.run: inbound message: platform=api_server user=h:4b225ff1ef chat=h:e672268457 msg_len=10 reply_to_id=None
+2026-11-21 01:28:43,650 INFO tools.registry: check_fn _browser_cdp_check returned False; dependent tools will be unavailable this turn
+2026-11-21 01:28:43,653 INFO tools.registry: check_fn _browser_dialog_check returned False; dependent tools will be unavailable this turn
+2026-11-21 01:28:43,705 INFO agent.model_metadata: Could not detect context length for model 'stand-in' at http://model.example.com/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-21 01:28:43,705 WARNING agent.model_metadata: Could not determine context length for model 'stand-in' (base_url=http://model.example.com/v1) — falling back to 256,000 tokens. Set model.context_length in config.yaml to override.
+2026-11-21 01:28:43,710 INFO tools.registry: check_fn check_computer_use_requirements returned False; dependent tools will be unavailable this turn
+2026-11-21 01:28:43,721 INFO tools.registry: check_fn check_image_generation_requirements returned False; dependent tools will be unavailable this turn
+2026-11-21 01:28:43,786 INFO agent.auxiliary_client: Vision auto-detect: using main provider custom (stand-in)
+2026-11-21 01:28:44,146 INFO agent.model_metadata: Could not detect context length for model 'stand-in' at http://model.example.com/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-21 01:28:44,152 INFO tools.tool_search: tool_search activated (tier 1): 16 core/visible tools kept, 7 deferred (~5523 tokens), listing full (budget ~4000 tokens)
+2026-11-21 01:28:44,174 INFO agent.model_metadata: Could not detect context length for model 'stand-in' at http://model.example.com/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-21 01:28:44,174 INFO gateway.run: Model context warmed: stand-in -> 256000 tokens (default)
+2026-11-21 01:28:44,175 INFO gateway.run: Turn machinery warmed in 1.4s (19 tool schema(s) materialized)
+2026-11-21 01:28:44,323 INFO gateway.run: Press Ctrl+C to stop
+2026-11-21 01:28:44,331 INFO gateway.run: kanban dispatcher: holding singleton dispatcher lock (/opt/data/kanban/.dispatcher.lock)
+2026-11-21 01:28:44,332 INFO gateway.run: kanban dispatcher: kanban.max_in_progress unset; using memory-derived default max_in_progress=7 (set kanban.max_in_progress in config.yaml to override)
+2026-11-21 01:28:44,351 INFO gateway.run: Cron scheduler will tick 1 profile(s): ['default']
+2026-11-21 01:28:44,355 INFO cron.scheduler_provider: In-process cron scheduler started (interval=60s)
+2026-11-21 01:28:44,364 INFO cron.scheduler_provider: Multiplex cron scheduler started for 1 profile(s): ['default'] (re-enumerated every cycle)
+2026-11-21 01:28:44,373 INFO gateway.run: Gateway housekeeping started (interval=60s)
+2026-11-21 01:28:44,473 INFO hermes_cli.mem_trim: memory trim: reason=messaging gateway housekeeping malloc_trim=1 collected=False rss_kib=228744->212740 rss_anon_kib=204796->188792 threads=18 duration_ms=2.2
+2026-11-21 01:28:45,699 INFO hermes_cli.web_server: Mounted plugin API routes: /api/plugins/hermes-achievements/
+2026-11-21 01:28:45,775 INFO hermes_cli.web_server: Mounted plugin API routes: /api/plugins/kanban/
+2026-11-21 01:28:45,811 INFO run_agent: OpenAI client created (agent_init, shared=True) thread=hermes-gateway_1:281473588892000 provider=custom base_url=http://model.example.com/v1 model=stand-in
+2026-11-21 01:28:45,829 INFO agent.model_metadata: Could not detect context length for model 'stand-in' at http://model.example.com/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-21 01:28:45,830 INFO tools.tool_search: tool_search activated (tier 1): 15 core/visible tools kept, 6 deferred (~5153 tokens), listing full (budget ~4000 tokens)
+2026-11-21 01:28:45,855 INFO agent.model_metadata: Could not detect context length for model 'stand-in' at http://model.example.com/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-21 01:28:46,002 INFO [api-a46d5df2789d4c01] agent.turn_context: conversation turn: session=api-a46d5df2789d4c01 model=stand-in provider=custom platform=api_server history=0 msg='Say hello.'
+2026-11-21 01:28:46,193 INFO run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-4 (<lambda>):281473134883168 provider=custom base_url=http://model.example.com/v1 model=stand-in
+2026-11-21 01:28:46,765 INFO [api-a46d5df2789d4c01] agent.conversation_loop: API call #1: model=stand-in provider=custom in=? out=? total=? latency=0.6s usage=unavailable
+2026-11-21 01:28:46,780 INFO [api-a46d5df2789d4c01] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=stand-in api_calls=1/9223372036854775807 budget=1/9223372036854775807 tool_turns=0 last_msg_role=assistant response_len=65 session=api-a46d5df2789d4c01
+2026-11-21 01:28:46,830 INFO gateway.run: response ready: platform=api_server chat=api-a46d5df2789d4c01 session=agent:main:api_server:dm:api-a46d5df2789d4c01 time=3.4s api_calls=1 response=65 chars
+2026-11-21 01:28:46,852 INFO aiohttp.access: 127.0.0.1 [21/Nov/2026:01:28:43 +0000] "POST /v1/chat/completions HTTP/1.1" 200 870 "-" "curl/8.14.1"
+== clock 1795224526.894122998

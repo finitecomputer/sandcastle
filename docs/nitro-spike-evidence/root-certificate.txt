@@ -1,0 +1,19 @@
+# The AWS Nitro Enclaves root certificate, G1, as pinned in crates/nitro-attest (2026-11-20)
+# Downloaded from https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip
+
+$ sha256sum AWS_NitroEnclaves_Root-G1.zip   # aws-nitro-enclaves-nsm-api docs/attestation_process.md gives 8cf60e2b...faff7c
+8cf60e2b2efca96c6a9e71e851d00c1b6991cc09eadbe64a6a1d1b1eb9faff7c  AWS_NitroEnclaves_Root-G1.zip
+
+$ openssl x509 -in root.pem -outform DER | sha256sum   # the Nitro Enclaves User Guide, "Verifying the root of trust", gives 64:1A:03:...:BB:5B
+641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b  root.der (= crates/nitro-attest/src/aws-nitro-enclaves-root-g1.der)
+
+$ openssl x509 -in root.der -inform DER -noout -subject -issuer -dates -fingerprint -sha256 -ext basicConstraints,keyUsage
+subject=C=US, O=Amazon, OU=AWS, CN=aws.nitro-enclaves
+issuer=C=US, O=Amazon, OU=AWS, CN=aws.nitro-enclaves
+notBefore=Oct 28 13:28:05 2019 GMT
+notAfter=Oct 28 14:28:05 2049 GMT
+sha256 Fingerprint=64:1A:03:21:A3:E2:44:EF:E4:56:46:31:95:D6:06:31:7E:D7:CD:CC:3C:17:56:E0:98:93:F3:C6:8F:79:BB:5B
+X509v3 Basic Constraints: critical
+    CA:TRUE
+X509v3 Key Usage: critical
+    Digital Signature, Certificate Sign, CRL Sign

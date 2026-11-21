@@ -1,0 +1,32 @@
+{
+ "instance_type": "m8g.2xlarge",
+ "arch": "aarch64",
+ "os": "Amazon Linux release 2023.12.20261120 (Amazon Linux)",
+ "kernel": "6.18.62-127.179.amzn2023.aarch64",
+ "cmdline_pool": "nitro_enclaves.mempool=26G@0",
+ "pool_kernel_log": "[    0.000000] nitro_enclaves: CMA pool: 26624 MiB reserved in 16 region(s), 26624 MiB requested",
+ "mem_pool_mib": {
+  "total": 26624,
+  "in_use": 260,
+  "free": 26364
+ },
+ "cpu_pool": {
+  "total": "7",
+  "in_use": "0",
+  "free": "7"
+ },
+ "pcie_slots": {
+  "now": "20",
+  "total": "40",
+  "in_use": "0"
+ },
+ "dev_nitro_enclaves": {
+  "mode": "0o660",
+  "uid": 0,
+  "gid": 0
+ },
+ "vcpus": 8,
+ "mem_total_mib": 31491,
+ "firecracker": "Firecracker v1.18.0",
+ "rust": "1.99.0"
+}

@@ -1,0 +1,90 @@
+{
+  "handled": "{\"host\":\"handled.example.com\",\"method\":\"GET\",\"path\":\"/through/the/proxy\",\"stand_in\":\"the spike's stand-in handler (for celld's callback route)\"}-rw-r--r-- 1 root root 623 Jan  1  1970 /etc/cloudflare/certs/cloudflare-containers-ca.crt\n",
+  "imds": "000 Empty reply from server\ncode 0\n",
+  "intercepted_https_answered_by_the_handler": true,
+  "internet_off_by_address": "000 Empty reply from server\ncode 0\n",
+  "internet_off_other_name": "code 2\n",
+  "kms_allowed_name": "198.18.0.2      kms.us-east-2.amazonaws.com\ncode 0\n",
+  "leak_1": "the proxy on the parent terminates the intercepted TLS with its own CA and reads every intercepted request in plaintext (the handler's answer above echoes its path); a spliced host (KMS here) it carries as bytes it cannot read",
+  "plain_http_intercept": "{\"data\":[{\"id\":\"stand-in\",\"object\":\"model\",\"owned_by\":\"nitro-spike\"}],\"object\":\"list\"}",
+  "policy": {
+    "allow": [
+      "kms.us-east-2.amazonaws.com"
+    ],
+    "intercept": [
+      "https handled.example.com",
+      "http fpac.fragment.internal",
+      "http model.example.com"
+    ],
+    "internet": false
+  },
+  "proxy_decisions": [
+    {
+      "decision": "Intercept(0)",
+      "host": "handled.example.com",
+      "to": "dns handled.example.com type 1"
+    },
+    {
+      "decision": "Intercept(0)",
+      "host": "handled.example.com",
+      "to": "dns handled.example.com type 28"
+    },
+    {
+      "decision": "Intercept(0)",
+      "host": "handled.example.com",
+      "to": "198.18.0.1:443"
+    },
+    {
+      "decision": "Refuse",
+      "host": "example.org",
+      "to": "dns example.org type 28"
+    },
+    {
+      "decision": "Refuse",
+      "host": "example.org",
+      "to": "dns example.org type 1"
+    },
+    {
+      "decision": "Refuse(\"the internet is off\")",
+      "host": null,
+      "to": "1.1.1.1:80"
+    },
+    {
+      "decision": "Refuse(\"not a public address\")",
+      "host": null,
+      "to": "169.254.169.254:80"
+    },
+    {
+      "decision": "Refuse(\"the node's own address\")",
+      "host": null,
+      "to": "10.0.2.1:22"
+    },
+    {
+      "decision": "Resolve",
+      "host": "kms.us-east-2.amazonaws.com",
+      "to": "dns kms.us-east-2.amazonaws.com type 28"
+    },
+    {
+      "decision": "Resolve",
+      "host": "kms.us-east-2.amazonaws.com",
+      "to": "dns kms.us-east-2.amazonaws.com type 1"
+    },
+    {
+      "decision": "Intercept(2)",
+      "host": "model.example.com",
+      "to": "dns model.example.com type 1"
+    },
+    {
+      "decision": "Intercept(2)",
+      "host": "model.example.com",
+      "to": "dns model.example.com type 28"
+    },
+    {
+      "decision": "Intercept(2)",
+      "host": "model.example.com",
+      "to": "198.18.0.3:80"
+    }
+  ],
+  "scenario": "network",
+  "the_parents_own_ssh": "000 \ncode 0\n"
+}

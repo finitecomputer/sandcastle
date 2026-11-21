@@ -1,0 +1,12 @@
+# Free-tier-eligible instance types in us-east-2, and whether each supports Nitro Enclaves (2026-11-20)
+$ aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true --query "InstanceTypes[].[InstanceType,VCpuInfo.DefaultVCpus,MemoryInfo.SizeInMiB,NitroEnclavesSupport,ProcessorInfo.SupportedArchitectures[0]]"
+c7i-flex.large	2	4096	unsupported	x86_64
+m7i-flex.large	2	8192	unsupported	x86_64
+t3.micro	2	1024	unsupported	x86_64
+t3.small	2	2048	unsupported	x86_64
+t4g.micro	2	1024	unsupported	arm64
+t4g.small	2	2048	unsupported	arm64
+t8i.micro	2	1024	unsupported	x86_64
+t8i.small	2	2048	unsupported	x86_64
+t9g.micro	2	1024	unsupported	arm64
+t9g.small	2	2048	unsupported	arm64

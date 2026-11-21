@@ -1,0 +1,46 @@
+{
+ "Version": "2012-10-17",
+ "Statement": [
+  {
+   "Sid": "AdministerButNeverDecrypt",
+   "Effect": "Allow",
+   "Principal": {
+    "AWS": "arn:aws:iam::<project>:root"
+   },
+   "Action": [
+    "kms:CreateAlias",
+    "kms:Describe*",
+    "kms:Enable*",
+    "kms:List*",
+    "kms:Put*",
+    "kms:Update*",
+    "kms:Disable*",
+    "kms:Get*",
+    "kms:Delete*",
+    "kms:TagResource",
+    "kms:UntagResource",
+    "kms:ScheduleKeyDeletion",
+    "kms:CancelKeyDeletion",
+    "kms:Encrypt"
+   ],
+   "Resource": "*"
+  },
+  {
+   "Sid": "DecryptOnlyForImageA",
+   "Effect": "Allow",
+   "Principal": {
+    "AWS": "arn:aws:iam::<project>:role/<parent-role>"
+   },
+   "Action": [
+    "kms:Decrypt",
+    "kms:GenerateDataKey"
+   ],
+   "Resource": "*",
+   "Condition": {
+    "StringEqualsIgnoreCase": {
+     "kms:RecipientAttestation:PCR0": "e2c83d2aacc88695f9dee09a007e8a12c6c96b5c3b1e21e5fa67cc4c39ec381dae16524c0df575ae5d5ce880f1890ebd"
+    }
+   }
+  }
+ ]
+}

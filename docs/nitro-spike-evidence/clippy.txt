@@ -1,0 +1,3 @@
+$ cargo clippy --offline --locked -p sandcastle-nitro-attest --all-targets --all-features -- -D warnings   # x86_64, the operator's machine
+    Checking sandcastle-nitro-attest v0.1.0 (crates/nitro-attest)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.69s

@@ -1,0 +1,17 @@
+{
+  "allowed": true,
+  "caller": "the parent's role, carrying the sandbox's attestation document as the recipient",
+  "cmdline": "panic=1 initcall_blacklist=i8042_init quiet",
+  "guest_key_ms": 355,
+  "guest_nsm_ms": 2,
+  "kms_error": null,
+  "opened_in_the_guest": {
+    "opened": {
+      "plaintext_bytes": 32,
+      "plaintext_sha256": "ac7565070d84c927deae589115ed441c6d8a28a401e7714afd60a4f970e3eb2e"
+    }
+  },
+  "plaintext_matches_the_secret": true,
+  "public_key_sha256": "01f47aca6f28197bd8eadf63f4945177bb2c5090755e24f13543eabb9ceabec0",
+  "scenario": "release"
+}

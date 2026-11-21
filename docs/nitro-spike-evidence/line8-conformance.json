@@ -1,0 +1,106 @@
+{
+  "scenario": "conformance",
+  "suite": {
+    "cases": [
+      {
+        "case": "open names the disk, this life's epoch, the volume and the head",
+        "detail": "Ok(Open { disk: \"conformance-c54e2d1c\", epoch: 1795217379792, volume_bytes: 1073741824, head: None })",
+        "pass": true
+      },
+      {
+        "case": "a put of a new name is created",
+        "detail": "Ok(Created)",
+        "pass": true
+      },
+      {
+        "case": "the same put again is the same (a lost answer, replayed)",
+        "detail": "Ok(Same)",
+        "pass": true
+      },
+      {
+        "case": "other bytes at that name conflict, naming the stored checksum",
+        "detail": "Ok(Conflict { sha256: [9, 139, 255, 79, 66, 14, 184, 50, 17, 104, 80, 186, 57, 31, 3, 236, 67, 118, 184, 242, 65, 75, 65, 16, 51, 238, 120, 202, 56, 31, 141, 105] })",
+        "pass": true
+      },
+      {
+        "case": "a get streams the whole object, its checksum checked",
+        "detail": "Ok(Some(100000))",
+        "pass": true
+      },
+      {
+        "case": "a ranged get answers exactly the range",
+        "detail": "Ok(Some(4096))",
+        "pass": true
+      },
+      {
+        "case": "a range past the end answers the tail",
+        "detail": "Ok(Some(2000))",
+        "pass": true
+      },
+      {
+        "case": "a range starting past the end is refused",
+        "detail": "Err(Refused { status: 416, detail: \"the range starts past the end\" })",
+        "pass": true
+      },
+      {
+        "case": "an absent name reads as absent",
+        "detail": "Ok(None)",
+        "pass": true
+      },
+      {
+        "case": "an absent name streams as absent",
+        "detail": "Ok(None)",
+        "pass": true
+      },
+      {
+        "case": "a put into another life's epoch is refused",
+        "detail": "Err(Refused { status: 403, detail: \"a put names another life's epoch\" })",
+        "pass": true
+      },
+      {
+        "case": "an empty object round-trips",
+        "detail": "Ok(Created) Ok(Some(0))",
+        "pass": true
+      },
+      {
+        "case": "this life's head is taken",
+        "detail": "Ok(Taken)",
+        "pass": true
+      },
+      {
+        "case": "the same head again is the same (a lost answer, replayed)",
+        "detail": "Ok(Same)",
+        "pass": true
+      },
+      {
+        "case": "a later checkpoint of this life is taken",
+        "detail": "Ok(Taken)",
+        "pass": true
+      },
+      {
+        "case": "the same checkpoint with another body is refused",
+        "detail": "Err(Refused { status: 409, detail: \"the same checkpoint with another body\" })",
+        "pass": true
+      },
+      {
+        "case": "the same checkpoint marked clean (a sleep) is taken",
+        "detail": "Ok(Taken)",
+        "pass": true
+      },
+      {
+        "case": "a clean head never loses its mark",
+        "detail": "Err(Refused { status: 409, detail: \"a clean head loses its mark\" })",
+        "pass": true
+      },
+      {
+        "case": "a head from a life that isn't running is refused",
+        "detail": "Err(Refused { status: 409, detail: \"only the running life posts a head\" })",
+        "pass": true
+      }
+    ],
+    "evidence": "conformance",
+    "failed": 0,
+    "passed": 19,
+    "remote": "fpac.fragment.internal:80"
+  }
+}

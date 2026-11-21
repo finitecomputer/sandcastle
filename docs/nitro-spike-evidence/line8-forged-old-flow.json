@@ -1,0 +1,12 @@
+{
+  "chosen_sha256": "494058442c8164ba39328af573e92a8cd3bfeff749b361f14ffcaf4c55de50ff",
+  "opened": {
+    "opened": {
+      "plaintext_bytes": 32,
+      "plaintext_sha256": "494058442c8164ba39328af573e92a8cd3bfeff749b361f14ffcaf4c55de50ff"
+    }
+  },
+  "scenario": "forged",
+  "the_guest_opened_the_parents_value": true,
+  "what": "line 5's flow: the parent relays KMS's envelope to the guest. Here the parent never calls KMS: it seals a value it chose to the public key in the guest's own document"
+}

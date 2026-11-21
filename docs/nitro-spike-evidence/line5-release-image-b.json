@@ -1,0 +1,12 @@
+{
+  "allowed": false,
+  "caller": "the parent's role, carrying the sandbox's attestation document as the recipient",
+  "cmdline": "panic=1 initcall_blacklist=i8042_init quiet nitro.spike=b",
+  "guest_key_ms": 222,
+  "guest_nsm_ms": 2,
+  "kms_error": "aws: [ERROR]: An error occurred (AccessDeniedException) when calling the Decrypt operation: User: arn:aws:sts::<project>:assumed-role/nitro-spike-parent/<instance> is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-east-2:<project>:key/<key> because no resource-based policy allows the kms:Decrypt action",
+  "opened_in_the_guest": null,
+  "plaintext_matches_the_secret": null,
+  "public_key_sha256": "c50320b9f856dc4436a20eb303afa0b378b65d6ae01ce4065dcd7f0744197ca3",
+  "scenario": "release"
+}

@@ -1,0 +1,22 @@
+{
+  "guests": 6,
+  "iterations_per_loop": [
+    18047252,
+    17691747,
+    17803457,
+    17822922,
+    36772154,
+    16240166,
+    18299521,
+    18667671,
+    32840679,
+    36840823,
+    33248148,
+    17466828
+  ],
+  "iterations_total": 281741368,
+  "loops_per_guest": 2,
+  "parent_vcpus": 8,
+  "scenario": "busy",
+  "vcpus_per_guest": 2
+}

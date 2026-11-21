@@ -1,0 +1,3 @@
+# The verifier's first look at a real document (2026-11-20), before it read indefinite-length maps:
+$ nitro-verify --document doc-0.bin --nonce <its nonce>
+nitro-verify: refused: malformed CBOR at byte 0: an indefinite length, which the NSM never writes

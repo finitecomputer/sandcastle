@@ -1,0 +1,31 @@
+== log
+held /run/nitro-spike/held (ready at 704 ms)
+guest: nitro: started
+guest: nitro: time 1795220815032
+guest: nitro: key {"plain":true}
+guest: nitro: mounted {"dir":"/opt/data","fpac":"mounted","misses":0,"ms":301.601157,"pack_waits":0,"waited_at":[]}
+== hermes cold
+{
+  "code": 0,
+  "stderr": "",
+  "stdout": "\nsession_id: local-5077554c3aad2fa84608d6da1c10f296dfcfa6b24ab43bf9f655bac11fa47a7c\nms 13046\n"
+}
+== hermes warm
+{
+  "code": 0,
+  "stderr": "",
+  "stdout": "\nsession_id: local-77870658b46cf32fe2d19be182cc716f1a242058063d6202d132643f838adaaa\nms 4101\n"
+}
+== image disk read, direct
+{
+  "code": 0,
+  "stderr": "",
+  "stdout": "1073741824 bytes (1.1 GB, 1.0 GiB) copied, 4.99213 s, 215 MB/s\n"
+}
+== image disk read, 4k random-ish (python, 2000 reads)
+{
+  "code": 0,
+  "stderr": "",
+  "stdout": "4k_reads_per_s 3871\n"
+}
+done

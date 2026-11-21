@@ -1,0 +1,35 @@
+{
+  "changed_byte": {
+    "file": "/opt/nitro/corrupt-me",
+    "image_offset": 2324463616,
+    "result": {
+      "another_file_reads": "#!/bin/sh\n# The spike's entrypoint in th",
+      "kernel": "[    0.109016] device-mapper: verity: sha256 using \"sha256-lib\"\n[    0.127440] device-mapper: verity: 254:16: data block 567496 is corrupted\n[    0.128154] device-mapper: verity: 254:16: data block 567496 is corrupted\n",
+      "read": "\ncode 0\n",
+      "stderr": "head: error reading '/opt/nitro/corrupt-me': Input/output error\n"
+    }
+  },
+  "clock_from_the_nsm_at_ms": 961.152013,
+  "clock_line": "nitro: time 1795218505353",
+  "cmdline": "panic=1 initcall_blacklist=i8042_init quiet dm-mod.create=\"sc-image,,,ro,0 7387136 verity 1 /dev/vdb /dev/vda 4096 4096 923392 1 sha256 e11682c73d1f170d261e73efbe07b703f6daf419c9abb1a3646825751ee0ba5a 6e17f0a50000400080000000000c0de06e17f0a50000400080000000000c0de0\" dm-mod.waitfor=/dev/vda,/dev/vdb sandcastle.image=/dev/dm-0 nitro.kms_key=<key>",
+  "exec_true_round_trip_ms": {
+    "max": 7.2,
+    "median": 0.5,
+    "min": 0.5,
+    "n": 20
+  },
+  "exit_code": 7,
+  "exit_stderr": "err\n",
+  "exit_stdout": "out\n",
+  "guest_uptime_at_ready_ms": 124,
+  "hello_ms": 904.141107,
+  "pcr0": "0cfbaab0f70eb0d20254f17c06cb1aa19848cbd81b11c0c91bd59b79ce694617775f568ce8a72e9be7259152352c695d",
+  "pcr1": "7ced2cba11d35d03f8986a971f3828f496fcb71d9e6e7c70731c32ac98e0c25db58961cb411d3ca6e8b708ed22d9554a",
+  "pcr2": "21b9efbc184807662e966d34f390821309eeac6802309798826296bf3e8bec7c10edb30948c90ba67310f7b964fc500a",
+  "ready_ms": 927.431996,
+  "scenario": "agent",
+  "stdin_echoed": true,
+  "stop_ms": 302.664877,
+  "verity_device": "sc-image\n1\nvda\nvdb\n",
+  "what": "sandcastle-guest as init; Hermes' image (upstream, arm64) as a raw disk under dm-verity; spawn to the guest's hello and ready; exec through sandcastle-vm's own client over vsock"
+}

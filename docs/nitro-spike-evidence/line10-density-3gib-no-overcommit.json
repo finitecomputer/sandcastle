@@ -1,0 +1,41 @@
+{
+  "cpu_overcommit": false,
+  "cpu_pool": "7",
+  "drives_each": 4,
+  "launched": [
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 636.835658,
+      "pool_free_bytes": "24337448960",
+      "pool_in_use_bytes": "3579838464",
+      "sandbox": 1,
+      "slots_in_use": "1"
+    },
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 635.710284,
+      "pool_free_bytes": "21030240256",
+      "pool_in_use_bytes": "6887047168",
+      "sandbox": 2,
+      "slots_in_use": "2"
+    },
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 647.969205,
+      "pool_free_bytes": "17723031552",
+      "pool_in_use_bytes": "10194255872",
+      "sandbox": 3,
+      "slots_in_use": "3"
+    }
+  ],
+  "memory_mib": 3072,
+  "pool_in_use_before_bytes": "272629760",
+  "pool_total_bytes": "27917287424",
+  "refused": {
+    "error": "2026-11-21T00:35:47.824568224 [anonymous-instance:main] RunWithoutApiError error: Failed to build MicroVM from Json: Could not Start MicroVM from one single json: Enclave builder error: Enclave VM error: Failed to add a vCPU on parent NUMA node 0: NE_ERR_NO_CPUS_AVAIL_IN_POOL (errno=272): no CPUs are available in the NE CPU pool",
+    "sandbox": 4
+  },
+  "scenario": "density",
+  "slots": "20",
+  "vcpus_each": 2
+}

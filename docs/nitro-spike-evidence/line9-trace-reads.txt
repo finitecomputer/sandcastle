@@ -1,0 +1,8 @@
+# Line 9: every read Firecracker made of the root image (fd 11, hermes.ext4) and its
+# verity tree (fd 7, hermes.verity) during one cold `hermes chat`, confidential, the root
+# under dm-verity, traced on the parent with strace (lseek + read; Firecracker is one thread).
+# The traced run was slower (16.8 s cold) than an untraced one; the counts are the point.
+image: 13858 reads, 131198976 bytes, average 9467 bytes
+  by size (up to): 4 KiB: 11367, 8 KiB: 753, 16 KiB: 683, 32 KiB: 393, 64 KiB: 335, 128 KiB: 310, 256 KiB: 13, 512 KiB: 3, 1024 KiB: 1
+tree: 2176 reads, 8912896 bytes, average 4096 bytes
+  by size (up to): 4 KiB: 2176

@@ -1,0 +1,7 @@
+# Python's speed, the image's own python3.14, a 5-second loop counting
+# iterations (as line 10's busy loops), three runs each: on the parent
+# itself (the image's binary run from the image mounted read-only), and in
+# a guest on line 9's plain disk in each mode. Iterations in 5 s.
+parent (m8g.xlarge, no VM)   36057162 35910943 35379101
+guest, confidential          36350915 32530587 36311432
+guest, direct                36820709 36705473 36294546

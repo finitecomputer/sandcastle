@@ -1,0 +1,233 @@
+{
+  "canary_needle": "the canary's text itself, counted in every file of the store and in the scratch disk's image",
+  "disk": "hermes",
+  "fill_gb": 1,
+  "folder_object_ms": "23",
+  "folder_put_bytes_per_s": "90000000",
+  "lives": [
+    {
+      "canary_in_the_store": 0,
+      "canary_on_the_scratch_disk": 0,
+      "canary_read_back": true,
+      "fill_s": 2.437395486,
+      "fpac_events": [
+        "{\"disk\":\"hermes\",\"epoch\":1795220025676,\"extents_mapped\":0,\"fpac\":\"opened\",\"memory_locked\":true,\"ms\":1.468477,\"new\":true,\"pages\":0,\"replayed\":0,\"rounds\":[],\"sealed\":true,\"volume_bytes\":42949672960,\"writeback_set\":true}",
+        "{\"dir\":\"/opt/data\",\"fpac\":\"mounted\",\"misses\":0,\"ms\":30.19041,\"pack_waits\":0,\"waited_at\":[]}",
+        "{\"fpac\":\"exit\",\"ms\":33646.133688}"
+      ],
+      "hello_ms": 809.471346,
+      "hermes_configured_s": 10.196657955,
+      "hermes_output": "⚠ install out of sync (pnpm: not installed or outdated) — this docker-managed install must rebuild the artifact to fix\nNITRO-SPIKE-STAND-IN-MODEL: hello from the instant stand-in model\n\nsession_id: local-390957bc80d99a522d19fec49d7881d06aea6e50ecfa58b73fe251add141de82\n",
+      "hermes_replied": true,
+      "hermes_reply_at_ms": 30188.746135999998,
+      "hermes_reply_exec_ms": 13512.5,
+      "key": {
+        "key_ms": 110.151966,
+        "key_sha256": "c2c181f01d249b907a5f13bd4e99c55f4387fdac488757d13932138d5e1e1e9a",
+        "mode": "new",
+        "timing": {
+          "kms_ms": 34.564594,
+          "signed_ms": 2.131894
+        },
+        "total_ms": 149.61225,
+        "wrapped": "<wrapped key: redacted, its header names the KMS key>"
+      },
+      "key_ms": 994.689953,
+      "life": 0,
+      "mounted_ms": 1040.140321,
+      "ready_ms": 819.808739,
+      "settle_s": 3.002043579,
+      "sleep_ms": 4450.5
+    },
+    {
+      "canary_in_the_store": 0,
+      "canary_on_the_scratch_disk": 0,
+      "canary_read_back": true,
+      "fpac_events": [
+        "{\"disk\":\"hermes\",\"epoch\":1795220061372,\"extents_mapped\":16829,\"fpac\":\"opened\",\"memory_locked\":true,\"ms\":106.29372400000001,\"new\":false,\"pages\":29,\"replayed\":0,\"rounds\":[{\"asks\":29,\"failed\":0,\"ms\":74.973035}],\"sealed\":true,\"volume_bytes\":42949672960,\"writeback_set\":true}",
+        "{\"dir\":\"/opt/data\",\"fpac\":\"mounted\",\"misses\":0,\"ms\":337.57964899999996,\"pack_waits\":1,\"waited_at\":[121]}",
+        "{\"fpac\":\"exit\",\"ms\":17113.284295}"
+      ],
+      "hello_ms": 741.7416380000001,
+      "hermes_output": "⚠ install out of sync (pnpm: not installed or outdated) — this docker-managed install must rebuild the artifact to fix\nNITRO-SPIKE-STAND-IN-MODEL: hello from the instant stand-in model\n\nsession_id: local-bf36691c8fa13d7bfdd78bd8a44c3b5b87603ae4adf90e339d2711f53d4da2e2\n",
+      "hermes_replied": true,
+      "hermes_reply_at_ms": 15456.515879999999,
+      "hermes_reply_exec_ms": 14123.6,
+      "key": {
+        "key_ms": 119.643607,
+        "key_sha256": "c2c181f01d249b907a5f13bd4e99c55f4387fdac488757d13932138d5e1e1e9a",
+        "mode": "wake",
+        "timing": {
+          "kms_ms": 32.426038,
+          "signed_ms": 2.361924
+        },
+        "total_ms": 157.219831,
+        "wrapped": null
+      },
+      "key_ms": 931.6361370000001,
+      "life": 1,
+      "mounted_ms": 1332.893133,
+      "ready_ms": 751.137677,
+      "sleep_ms": 2588.3
+    },
+    {
+      "canary_in_the_store": 0,
+      "canary_on_the_scratch_disk": 0,
+      "canary_read_back": true,
+      "fpac_events": [
+        "{\"disk\":\"hermes\",\"epoch\":1795220080135,\"extents_mapped\":10987,\"fpac\":\"opened\",\"memory_locked\":true,\"ms\":70.281755,\"new\":false,\"pages\":29,\"replayed\":0,\"rounds\":[{\"asks\":23,\"failed\":0,\"ms\":41.236248}],\"sealed\":true,\"volume_bytes\":42949672960,\"writeback_set\":true}",
+        "{\"dir\":\"/opt/data\",\"fpac\":\"mounted\",\"misses\":0,\"ms\":106.63306,\"pack_waits\":0,\"waited_at\":[]}",
+        "{\"fpac\":\"exit\",\"ms\":15821.527154}"
+      ],
+      "hello_ms": 729.871017,
+      "hermes_output": "⚠ install out of sync (pnpm: not installed or outdated) — this docker-managed install must rebuild the artifact to fix\nNITRO-SPIKE-STAND-IN-MODEL: hello from the instant stand-in model\n\nsession_id: local-a55e45b52b261f2cb7e76c9ba57a30d6284162745460164fca0d042fd69f2b81\n",
+      "hermes_replied": true,
+      "hermes_reply_at_ms": 14254.204443,
+      "hermes_reply_exec_ms": 13126.8,
+      "key": {
+        "key_ms": 200.936091,
+        "key_sha256": "c2c181f01d249b907a5f13bd4e99c55f4387fdac488757d13932138d5e1e1e9a",
+        "mode": "wake",
+        "timing": {
+          "kms_ms": 36.063919,
+          "signed_ms": 2.128303
+        },
+        "total_ms": 241.890792,
+        "wrapped": null
+      },
+      "key_ms": 1001.7066450000001,
+      "life": 2,
+      "mounted_ms": 1127.4015040000002,
+      "ready_ms": 739.2694210000001,
+      "sleep_ms": 2569.4
+    },
+    {
+      "canary_in_the_store": 0,
+      "canary_on_the_scratch_disk": 0,
+      "canary_read_back": true,
+      "fpac_events": [
+        "{\"disk\":\"hermes\",\"epoch\":1795220097666,\"extents_mapped\":11063,\"fpac\":\"opened\",\"memory_locked\":true,\"ms\":84.236537,\"new\":false,\"pages\":29,\"replayed\":0,\"rounds\":[{\"asks\":23,\"failed\":0,\"ms\":54.899079}],\"sealed\":true,\"volume_bytes\":42949672960,\"writeback_set\":true}",
+        "{\"dir\":\"/opt/data\",\"fpac\":\"mounted\",\"misses\":0,\"ms\":122.662267,\"pack_waits\":0,\"waited_at\":[]}",
+        "{\"fpac\":\"exit\",\"ms\":15906.534104}"
+      ],
+      "hello_ms": 727.3794489999999,
+      "hermes_output": "⚠ install out of sync (pnpm: not installed or outdated) — this docker-managed install must rebuild the artifact to fix\nNITRO-SPIKE-STAND-IN-MODEL: hello from the instant stand-in model\n\nsession_id: local-28fa81cec51ed7487f7f2c192f1bd44f6b0d682129e5e447dfb927fefebcd42b\n",
+      "hermes_replied": true,
+      "hermes_reply_at_ms": 14327.611450999999,
+      "hermes_reply_exec_ms": 13202.0,
+      "key": {
+        "key_ms": 198.549355,
+        "key_sha256": "c2c181f01d249b907a5f13bd4e99c55f4387fdac488757d13932138d5e1e1e9a",
+        "mode": "wake",
+        "timing": {
+          "kms_ms": 31.819154999999995,
+          "signed_ms": 2.246834
+        },
+        "total_ms": 235.364698,
+        "wrapped": null
+      },
+      "key_ms": 993.534721,
+      "life": 3,
+      "mounted_ms": 1125.544125,
+      "ready_ms": 737.151982,
+      "sleep_ms": 2577.2
+    },
+    {
+      "canary_in_the_store": 0,
+      "canary_on_the_scratch_disk": 0,
+      "canary_read_back": true,
+      "fpac_events": [
+        "{\"disk\":\"hermes\",\"epoch\":1795220115284,\"extents_mapped\":11144,\"fpac\":\"opened\",\"memory_locked\":true,\"ms\":91.980269,\"new\":false,\"pages\":29,\"replayed\":0,\"rounds\":[{\"asks\":23,\"failed\":0,\"ms\":62.68858300000001}],\"sealed\":true,\"volume_bytes\":42949672960,\"writeback_set\":true}",
+        "{\"dir\":\"/opt/data\",\"fpac\":\"mounted\",\"misses\":0,\"ms\":127.28662800000001,\"pack_waits\":0,\"waited_at\":[]}",
+        "{\"fpac\":\"exit\",\"ms\":15921.894416000001}"
+      ],
+      "hello_ms": 734.7511,
+      "hermes_output": "⚠ install out of sync (pnpm: not installed or outdated) — this docker-managed install must rebuild the artifact to fix\nNITRO-SPIKE-STAND-IN-MODEL: hello from the instant stand-in model\n\nsession_id: local-577c6a16ac50d1b09d29c0dcb93471d7dc5b4401b555cae080a2ca23a912e0f9\n",
+      "hermes_replied": true,
+      "hermes_reply_at_ms": 14272.470910999999,
+      "hermes_reply_exec_ms": 13168.0,
+      "key": {
+        "key_ms": 156.711587,
+        "key_sha256": "c2c181f01d249b907a5f13bd4e99c55f4387fdac488757d13932138d5e1e1e9a",
+        "mode": "wake",
+        "timing": {
+          "kms_ms": 30.867045,
+          "signed_ms": 2.331391
+        },
+        "total_ms": 192.686971,
+        "wrapped": null
+      },
+      "key_ms": 958.237474,
+      "life": 4,
+      "mounted_ms": 1104.436239,
+      "ready_ms": 744.402341,
+      "sleep_ms": 2608.7
+    },
+    {
+      "canary_in_the_store": 0,
+      "canary_on_the_scratch_disk": 0,
+      "canary_read_back": true,
+      "fpac_events": [
+        "{\"disk\":\"hermes\",\"epoch\":1795220132873,\"extents_mapped\":11189,\"fpac\":\"opened\",\"memory_locked\":true,\"ms\":69.092761,\"new\":false,\"pages\":29,\"replayed\":0,\"rounds\":[{\"asks\":23,\"failed\":0,\"ms\":39.939676}],\"sealed\":true,\"volume_bytes\":42949672960,\"writeback_set\":true}",
+        "{\"dir\":\"/opt/data\",\"fpac\":\"mounted\",\"misses\":0,\"ms\":102.784918,\"pack_waits\":0,\"waited_at\":[]}",
+        "{\"fpac\":\"exit\",\"ms\":25744.245608}"
+      ],
+      "hello_ms": 723.199615,
+      "hermes_output": "⚠ install out of sync (pnpm: not installed or outdated) — this docker-managed install must rebuild the artifact to fix\nNITRO-SPIKE-STAND-IN-MODEL: hello from the instant stand-in model\n\nsession_id: local-774f30c799d2f8bb043ddd7632330050aab7cbfddb36910e5fd65199ced23e9d\n",
+      "hermes_replied": true,
+      "hermes_reply_at_ms": 24328.719682,
+      "hermes_reply_exec_ms": 23055.6,
+      "key": {
+        "key_ms": 363.027408,
+        "key_sha256": "c2c181f01d249b907a5f13bd4e99c55f4387fdac488757d13932138d5e1e1e9a",
+        "mode": "wake",
+        "timing": {
+          "kms_ms": 31.852120000000003,
+          "signed_ms": 2.087332
+        },
+        "total_ms": 399.746694,
+        "wrapped": null
+      },
+      "key_ms": 1152.8002370000002,
+      "life": 5,
+      "mounted_ms": 1273.0774099999999,
+      "ready_ms": 732.434595,
+      "sleep_ms": 2575.5
+    }
+  ],
+  "plain": false,
+  "scenario": "lives",
+  "store": "FPAC's folder remote on the parent (a STAND-IN for the platform's route and its store)",
+  "what_the_parent_signed": [
+    {
+      "body_sha256": "6a6be3e62b1bb173f365f9f8765d3826d23d378a4d959da2f0ab24e0232bebb6",
+      "signed": true,
+      "target": "TrentService.GenerateDataKey"
+    },
+    {
+      "body_sha256": "0b14304acc6de88892c55ae7b5cebc9214cce89a08ded0f84f555d7a71a1d647",
+      "signed": true,
+      "target": "TrentService.Decrypt"
+    },
+    {
+      "body_sha256": "e80e640965a0af2c520260badd6eb2dc1bf9e9ea54e1a38b1899cb468f06e176",
+      "signed": true,
+      "target": "TrentService.Decrypt"
+    },
+    {
+      "body_sha256": "ad93eee7df03caa1d5ad586c94ffc26a6a786d970e1d0e08ce0f29bc07a328a5",
+      "signed": true,
+      "target": "TrentService.Decrypt"
+    },
+    {
+      "body_sha256": "a13aecdcb2dcf5694efe4a1c21b00ddee7c8fa05ded3b40fa49bbc655aefec06",
+      "signed": true,
+      "target": "TrentService.Decrypt"
+    },
+    {
+      "body_sha256": "4e0bbaea2010275a29866758429ffbfdfc40b8e95afb9c2b83fa2ecf8f0b55eb",
+      "signed": true,
+      "target": "TrentService.Decrypt"
+    }
+  ]
+}

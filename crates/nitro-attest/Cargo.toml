@@ -1,0 +1,25 @@
+[package]
+name = "sandcastle-nitro-attest"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Verifies an AWS Nitro attestation document (a Nitro Enclave's, or a Nitro Sandbox's in confidential mode): COSE Sign1 with ES384, its certificate chain to the pinned Nitro Enclaves root, every certificate's validity, the document's age, and a single-use nonce. Pure: the caller passes the time and the randomness. Written to become celld's verifier (docs/nitro-spike.md)."
+
+[[bin]]
+name = "nitro-verify"
+path = "src/bin/nitro-verify.rs"
+
+# Every dependency is one the workspace already locks: ring and webpki come
+# in with rustls, rcgen and time with the egress crate's CA.
+[dependencies]
+hex.workspace = true
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rustls-pki-types.workspace = true
+rustls-webpki.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rcgen.workspace = true
+time.workspace = true

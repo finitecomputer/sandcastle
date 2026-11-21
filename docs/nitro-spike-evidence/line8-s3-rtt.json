@@ -1,0 +1,28 @@
+{
+ "what": "from the parent (m8g.xlarge, us-east-2) to an S3 bucket in us-east-2, curl with SigV4; times in ms",
+ "ranged_get_64k": {
+  "n": 59,
+  "first_byte_p50": 23.5,
+  "first_byte_p99": 37.2,
+  "total_p50": 25.3,
+  "total_min": 16.4,
+  "total_max": 69.2,
+  "statuses": [
+   "206"
+  ],
+  "the_first_with_its_connection_ms": 36.4
+ },
+ "put_8mib_one_stream": {
+  "n": 15,
+  "p50_ms": 90.9,
+  "mb_per_s": 89.8,
+  "statuses": [
+   "200"
+  ]
+ },
+ "put_8mib_eight_streams": {
+  "puts": 32,
+  "seconds": 0.41,
+  "mb_per_s": 661.7
+ }
+}

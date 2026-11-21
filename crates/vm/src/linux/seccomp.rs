@@ -39,6 +39,17 @@ const NAMESPACE_FLAGS: u32 = (libc::CLONE_NEWNS
     | libc::CLONE_NEWCGROUP) as u32;
 
 /// Refused in every mode.
+/// On any other architecture the lists are empty and the filter's first
+/// check (the x86_64 audit architecture) kills the process at its first
+/// system call: the krun jail fails closed there, rather than running
+/// unfiltered, until lists for it are gathered as these were (the Nitro
+/// spike builds this crate on arm64 for its client alone, which uses none
+/// of this; docs/nitro-spike.md).
+#[cfg(not(target_arch = "x86_64"))]
+pub const DENIED: &[libc::c_long] = &[];
+#[cfg(not(target_arch = "x86_64"))]
+pub const ALLOWED: &[libc::c_long] = &[];
+
 #[cfg(target_arch = "x86_64")]
 pub const DENIED: &[libc::c_long] = &[
     libc::SYS_ptrace,

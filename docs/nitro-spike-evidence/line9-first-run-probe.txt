@@ -1,0 +1,38 @@
+# Line 9's cold-read study, the two probes that found where the cold 9 s go
+# (docs/nitro-spike.md, line 9, "Where the cold 9 s go"). One computer each,
+# confidential, the root under dm-verity, the plain disk. Output as printed.
+
+## Probe 1: a cold `hermes chat`, a warm one, then one after dropping the
+## guest's page cache (echo 3 > /proc/sys/vm/drop_caches). /proc/stat's
+## first line around each (user nice system idle iowait ..., 10 ms ticks).
+cpu0 cpu 20 0 15 245 4 0 2 0 0 0
+cold_ms 12665
+cpu1 cpu 1320 8 95 1345 31 0 9 0 0 0
+warm_ms 3716
+cpu2 cpu 1685 10 109 1702 32 0 10 0 0 0
+dropped_ms 3908
+cpu3 cpu 2050 15 150 2066 44 0 11 0 0 0
+# Files changed during the three runs: 5 on the root (3 in /tmp, 2 in
+# /var/lib/fpac), 30 on Hermes' home (/opt/data: logs, state, cron, a skills
+# file, runtime, an installs bootstrap marker, cache, a gateway lock).
+dont_write 1 3.14.9 (main, Oct 21 2026, 17:47:14) [Clang 23.1.3 ]
+pyc_matches 123
+pyc_other 4
+
+## Probe 2: the guest's processes before and after a cold `hermes chat`, and
+## Python's import times (PYTHONPROFILEIMPORTTIME) for a cold and a warm run.
+== before
+    PID ELAPSED   RSS COMMAND
+      1       0  1248 sleep infinity
+      6       0  3696 /opt/nitro/fpac mount --dir /opt/data
+== after
+    PID ELAPSED   RSS COMMAND
+      1      13  1248 sleep infinity
+      6      13 10336 /opt/nitro/fpac mount --dir /opt/data
+    156       9 298352 /opt/hermes/.venv/bin/python -m hermes_cli.main --profile default gateway run --quiet --idle-exit
+== imports, cold run: 1423 lines; the largest cumulative (us)
+import time:     20620 |     854317 | cli
+import time:     29032 |     841867 | hermes_cli.main
+== imports, warm run: 1399 lines
+import time:     20662 |     845921 | cli
+import time:     23086 |     785996 | hermes_cli.main
