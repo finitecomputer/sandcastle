@@ -348,6 +348,31 @@ pub struct ExecRequest {
     pub pty: Option<PtySize>,
 }
 
+/// What the agent is asked for an exec: one place for the engine and for
+/// a home that runs execs over a computer's attested session.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExecPlan {
+    pub process: sandcastle_wire::Process,
+    pub pty: Option<sandcastle_wire::WinSize>,
+    pub stdin: bool,
+    pub stdout: sandcastle_wire::Output,
+    pub stderr: sandcastle_wire::Output,
+}
+
+/// An exec request as the agent takes it: the container's `PATH` (its
+/// image's) unless the request names one.
+pub fn exec_plan(req: ExecRequest, path: Option<String>) -> Result<ExecPlan, ApiError> {
+    req.validate()?;
+    let mut env: Vec<String> = req.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    if !req.env.contains_key("PATH") {
+        env.extend(path.map(|p| format!("PATH={p}")));
+    }
+    let process = sandcastle_wire::Process { argv: req.cmd, env, cwd: req.cwd, user: req.user };
+    process.validate().map_err(|e| ApiError::Invalid(format!("exec: {e}")))?;
+    let pty = req.pty.map(|p| sandcastle_wire::WinSize { rows: p.rows, cols: p.cols });
+    Ok(ExecPlan { process, pty, stdin: req.stdin, stdout: req.stdout, stderr: req.stderr })
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PtySize {
     pub cols: u16,

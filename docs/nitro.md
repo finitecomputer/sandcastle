@@ -22,6 +22,9 @@ The stack, each a draft PR on `node`:
    that runs in a Nitro Sandbox of its own, over the home's vsock.
 6. **The sealed scratch disk** (`nitro/sealed-scratch`): a computer's
    writable layer is ciphertext on the parent.
+7. **The attested session** (`nitro/attested-session`): a home verifies
+   each computer and drives it over a session the parent cannot read or
+   use; the parent keeps start, stop and kill.
 
 ## The guest
 
@@ -210,6 +213,39 @@ writes outside `/data`'s saves) is ciphertext on the parent:
   Sandbox; the parent cannot turn it off without changing the guest, and
   so the initrd and PCR0.
 
+## The attested session
+
+A home drives its computers over a session of its own with each, which
+the parent carries and can neither read nor use (`crates/session`):
+
+- **The guest's key.** Each guest life makes a Curve25519 key. On a node
+  whose engine says `session_required`, the guest's measured kernel line
+  carries `sandcastle.session=required` (so dropping it changes PCR0), and
+  the guest listens on vsock 1026, which the runner relays (`session.sock`)
+  and the engine's API offers as an upgrade.
+- **The claim.** When a computer starts, the home half of
+  `sandcastle-bridge` holds the start's answer, waits for it to run, and
+  attests it: the guest answers its NSM's document for the home's fresh
+  nonce, with its key as the document's public key. The home verifies the
+  chain to AWS's root, the nonce and the age (`sandcastle-nitro-attest`),
+  and the PCR0 against its pins, then runs Noise NK to that key, which
+  only that guest holds, and sends the session's secret. The guest is
+  claimed for its life: a second claim is refused. A computer that does
+  not attest is destroyed and its start fails.
+- **The work.** Each exec, and each connection to a computer's port, is a
+  connection of its own resumed with Noise NKpsk0 by that secret, the
+  agent's protocol inside. The guest's own agent port answers only what
+  the parent keeps: ping, a signal to the entrypoint (stop), the memory
+  trim; its exec and connect are refused there. Kill is the runner's.
+- **Kept across a home restart.** The home keeps each claim's credential
+  in its own state directory (0600), so a computer kept running through a
+  home restart is still the home's.
+- **The pins** are the PCR0s of the images a home runs on its node. Each is
+  read once from a computer of the image, as the home's first refusal
+  prints it, and written to the pin file by the operator. A node builds an
+  image's root itself (not byte-reproducible), so a pin is the node's, and
+  that first reading trusts the node (above, "Release assets").
+
 ## What the parent can still see and do
 
 A confidential sandbox keeps its memory from the parent. Everything that
@@ -225,11 +261,14 @@ computer:
    agent's conversations, its tool calls and its saved files all pass
    through it. Hosts that are not intercepted are spliced, so the parent
    sees their names and sizes but not their contents.
-2. **Exec and terminals.** `agent.sock` is relayed on the parent: every
-   `exec()` (the saves' shim included), its output and a terminal's
-   keystrokes.
-3. **Ports.** A connection to a computer's port (the screen's VNC, an
-   app) is the engine's TCP socket: the parent sees its bytes.
+2. **Exec and terminals** go over each computer's attested session on a
+   node that requires them (above): the parent carries ciphertext. On a
+   node that does not, `agent.sock` is relayed in the clear.
+3. **Ports.** A home's connection to a computer's port goes over its
+   session. But the computer's NIC still takes connections from the
+   parent: the engine's own `ports.sock` reaches its ports over TCP, in
+   the clear (shown in `session.md`). Closed when the computer's egress
+   moves inside the boundary and its NIC goes.
 4. **Disks.** The scratch disk is ciphertext (above, "The sealed scratch
    disk"); the parent sees which blocks are written and when, not what.
    The image is protected for integrity only (dm-verity): its contents are
@@ -239,24 +278,24 @@ computer:
 
 **It can:**
 
-6. **Run commands in a computer.** The guest's agent serves any
-   connection to its vsock port, and the parent can open one: this alone
-   undoes the memory's protection.
+6. **Run commands in a computer** only on a node that does not require
+   sessions. On one that does, the guest refuses the parent's exec, and a
+   claim the parent makes first leaves the home's attempt refused, so the
+   home never puts its data in that VM.
 7. **Change what it relays:** answer or alter an intercepted request, or
    an exec's output, or scramble the scratch disk's blocks (XTS has no
    integrity: a changed block reads as garbage, not as the parent's
    choice).
-8. **Boot something else in a computer's place.** A computer's NSM signs
-   its PCRs, but nothing checks them: no one asks a computer for its
-   document before trusting it.
+8. **Boot something else in a computer's place**, only where nothing
+   checks: a home that requires sessions verifies each computer's
+   document and PCR0 before it uses it.
 9. **Stop, refuse or slow anything** (availability is never protected).
 
-**What closes each, later:** an attested channel from the home to each
-computer (the guest makes a key, its NSM document binds it, the home
-checks the PCRs before it talks to it) closes 6, 7 and 8 for exec, and
-carries 1 to 3 end to end if the proxy's TLS ends in the guest or in the
-home instead of on the parent. 4 is closed for the scratch disk by a
-key the guest makes and keeps.
+**What is closed, and what is left:** the attested session closes 6 and
+8, and 2 and 7 for exec. 4 is closed for the scratch disk by a key the
+guest makes and keeps. Left: 1 (intercepted traffic through the parent's
+proxy) and 3 for the NIC; both go when the computer's egress moves into
+the session.
 
 ## Evidence
 
@@ -273,6 +312,8 @@ this engine in Nitro mode, every sandbox confidential.
   build VM applying its five layers and ending, then each sandbox's start
   (ready in about 500 ms) and end.
 
+- `session.md`: the attested session: an exec over it answered, the
+  parent's own exec and claim refused, the suite through a home.
 - `sealed-scratch.md`: the sealed scratch disk: a planted string found
   0 times on the parent (8,192 with no seal), and the suite's 23 cases
   that do not snapshot passing on it.

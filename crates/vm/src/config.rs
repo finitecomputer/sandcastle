@@ -106,6 +106,10 @@ pub struct Nitro {
     pub guest_cid: u32,
     /// The image's verity table: a run's measured root. A build has none.
     pub verity: Option<Verity>,
+    /// The guest takes its agent's work only over its attested session
+    /// (`sandcastle_wire::SESSION_ARG`, on the measured line). A run's only.
+    #[serde(default)]
+    pub session: bool,
 }
 
 /// A Nitro Sandbox's memory: at least 256 MiB, in steps of 2.
@@ -320,6 +324,10 @@ impl VmConfig {
                 sandcastle_wire::disks::VERITY_DEVICE
             ));
         }
+        if n.session {
+            c.push(' ');
+            c.push_str(sandcastle_wire::SESSION_ARG);
+        }
         for a in &self.kernel_args {
             c.push(' ');
             c.push_str(a);
@@ -406,6 +414,7 @@ pub(crate) mod tests {
             cpu_overcommit: false,
             guest_cid: 10,
             verity: Some(Verity { data_blocks: 923_392, hash_start_block: 1, root_hash: "e1".repeat(32), salt: "6e17".repeat(16) }),
+            session: false,
         });
         c
     }

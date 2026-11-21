@@ -36,7 +36,14 @@ pub enum ClientError {
 
 pub struct Vm {
     run_dir: PathBuf,
+    /// A caller's way to the agent in place of the run directory's socket:
+    /// an attested session's plain end (`sandcastle_session`), for a home
+    /// whose computers take their work only over it.
+    agent: Option<Dial>,
 }
+
+/// One fresh connection to the agent.
+pub type Dial = std::sync::Arc<dyn Fn() -> std::io::Result<UnixStream> + Send + Sync>;
 
 #[derive(Debug, Default)]
 pub struct ExecOutput {
@@ -162,7 +169,13 @@ impl ExecSession {
 
 impl Vm {
     pub fn new(run_dir: impl Into<PathBuf>) -> Vm {
-        Vm { run_dir: run_dir.into() }
+        Vm { run_dir: run_dir.into(), agent: None }
+    }
+
+    /// A client whose every agent connection is `dial`'s; it has no control
+    /// socket (the runner's is the parent's).
+    pub fn over(dial: Dial) -> Vm {
+        Vm { run_dir: PathBuf::new(), agent: Some(dial) }
     }
 
     pub fn run_dir(&self) -> &Path {
@@ -170,6 +183,12 @@ impl Vm {
     }
 
     fn dial(&self, name: &str) -> Result<UnixStream, ClientError> {
+        if let Some(dial) = &self.agent {
+            if name == paths::AGENT_SOCK {
+                return dial().map_err(|source| ClientError::Connect { path: "the attested session".into(), source });
+            }
+            return Err(ClientError::Connect { path: name.into(), source: std::io::Error::other("a session's client has only the agent") });
+        }
         let path = self.run_dir.join(name);
         UnixStream::connect(&path).map_err(|source| ClientError::Connect { path, source })
     }

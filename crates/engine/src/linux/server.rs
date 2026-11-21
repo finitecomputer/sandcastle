@@ -17,14 +17,14 @@ use crate::api::{ApiError, DestroyRequest, ErrorBody, ExecRequest, InterceptsReq
 /// A request body, as read.
 pub const BODY_BYTES_MAX: usize = 1 << 20;
 
-fn json<T: Serialize>(status: u16, v: &T) -> Response<Full<Bytes>> {
+pub(crate) fn json<T: Serialize>(status: u16, v: &T) -> Response<Full<Bytes>> {
     let mut r = Response::new(Full::new(Bytes::from(serde_json::to_vec(v).expect("serializes"))));
     *r.status_mut() = hyper::StatusCode::from_u16(status).expect("a status");
     r.headers_mut().insert("content-type", "application/json".parse().expect("a header"));
     r
 }
 
-fn error(e: ApiError) -> Response<Full<Bytes>> {
+pub(crate) fn error(e: ApiError) -> Response<Full<Bytes>> {
     json(e.status(), &ErrorBody { error: e.to_string(), kind: e.kind().into() })
 }
 
@@ -34,7 +34,7 @@ fn empty(status: u16) -> Response<Full<Bytes>> {
     r
 }
 
-async fn body<T: DeserializeOwned>(req: Request<Incoming>) -> Result<T, ApiError> {
+pub(crate) async fn body<T: DeserializeOwned>(req: Request<Incoming>) -> Result<T, ApiError> {
     let bytes = Limited::new(req.into_body(), BODY_BYTES_MAX)
         .collect()
         .await
@@ -70,12 +70,20 @@ async fn save_body(engine: &Engine, req: Request<Incoming>) -> Result<std::path:
 }
 
 /// `exec`'s answer: the switch to its framed stream.
-fn switching() -> Response<Full<Bytes>> {
+pub(crate) fn switching() -> Response<Full<Bytes>> {
+    switching_to(crate::exec_stream::UPGRADE)
+}
+
+fn switching_to(protocol: &'static str) -> Response<Full<Bytes>> {
     let mut r = empty(101);
     r.headers_mut().insert("connection", "Upgrade".parse().expect("a header"));
-    r.headers_mut().insert("upgrade", crate::exec_stream::UPGRADE.parse().expect("a header"));
+    r.headers_mut().insert("upgrade", protocol.parse().expect("a header"));
     r
 }
+
+/// The upgrade a guest's attested session takes (docs/nitro.md): its bytes,
+/// sealed end to end, relayed as they come.
+pub const SESSION_UPGRADE: &str = "sandcastle-session";
 
 pub async fn route(engine: Arc<Engine>, mut req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
     let path: Vec<String> = req.uri().path().trim_matches('/').split('/').map(str::to_string).collect();
@@ -126,6 +134,27 @@ pub async fn route(engine: Arc<Engine>, mut req: Request<Incoming>) -> Result<Re
                     switching()
                 }),
                 Err(e) => Err(e),
+            }
+        }
+        (&Method::POST, ["v1", "containers", name, "session"]) => {
+            let upgrading = req.headers().get("upgrade").and_then(|v| v.to_str().ok()) == Some(SESSION_UPGRADE);
+            if !upgrading {
+                Err(ApiError::Invalid(format!("a session upgrades to {SESSION_UPGRADE}")))
+            } else {
+                match engine.session_socket(name) {
+                    Ok(at) => {
+                        let on_upgrade = hyper::upgrade::on(&mut req);
+                        tokio::spawn(async move {
+                            let (Ok(up), Ok(mut guest)) = (on_upgrade.await, tokio::net::UnixStream::connect(&at).await) else { return };
+                            let mut up = hyper_util::rt::TokioIo::new(up);
+                            // Ciphertext both ways; the session's ends see
+                            // a cut as a truncation.
+                            let _ = tokio::io::copy_bidirectional(&mut up, &mut guest).await;
+                        });
+                        Ok(switching_to(SESSION_UPGRADE))
+                    }
+                    Err(e) => Err(e),
+                }
             }
         }
         (&Method::GET, ["v1", "containers", name, "wait"]) => engine.wait(name).await.map(|e| json(200, &e)),

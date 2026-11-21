@@ -46,6 +46,12 @@ fn ca(name: &str, path_len: u8, from_s: i64, to_s: i64) -> CertificateParams {
     p
 }
 
+impl Default for Chain {
+    fn default() -> Chain {
+        Chain::new()
+    }
+}
+
 impl Chain {
     /// The usual chain: the leaf valid for three hours around T0, as AWS's
     /// signing certificates are.
@@ -108,10 +114,16 @@ pub struct Fields {
     pub indefinite: bool,
 }
 
+impl Default for Fields {
+    fn default() -> Fields {
+        Fields::new()
+    }
+}
+
 impl Fields {
     pub fn new() -> Fields {
         Fields {
-            module_id: "i-00000000000000000-enc0000000000000000".into(),
+            module_id: "a-test-module".into(),
             digest: "SHA384".into(),
             timestamp_ms: T0_MS,
             pcrs: (0..5u64).map(|i| (i, vec![i as u8 + 1; 48])).chain([(16, vec![0; 48])]).collect(),

@@ -275,14 +275,20 @@ const _: () = assert!(NSM_IOCTL_RAW == (3 << 30) | (32 << 16) | (0x0A << 8));
 
 /// An attestation document from `/dev/nsm`, for a fresh random nonce.
 pub fn nsm_document() -> io::Result<Vec<u8>> {
-    use std::os::fd::AsRawFd;
     let mut nonce = [0u8; crate::nsm::NONCE_BYTES];
     // SAFETY: getrandom writes at most the buffer's length.
     let n = unsafe { libc::getrandom(nonce.as_mut_ptr() as *mut libc::c_void, nonce.len(), 0) };
     if n != nonce.len() as isize {
         return Err(io::Error::other("getrandom gave too few bytes for the NSM's nonce"));
     }
-    let request = crate::nsm::attestation_request(&nonce);
+    nsm_document_for(&nonce, None)
+}
+
+/// An attestation document for the caller's nonce, binding `public_key`
+/// when given (the attested session's key).
+pub fn nsm_document_for(nonce: &[u8; crate::nsm::NONCE_BYTES], public_key: Option<&[u8; 32]>) -> io::Result<Vec<u8>> {
+    use std::os::fd::AsRawFd;
+    let request = crate::nsm::attestation_request(nonce, public_key);
     let mut response = vec![0u8; crate::nsm::RESPONSE_BYTES_MAX];
     let mut raw = NsmRaw {
         request: NsmIovec { addr: request.as_ptr() as u64, len: request.len() as u64 },

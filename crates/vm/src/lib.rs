@@ -17,6 +17,8 @@ pub use lifecycle::{Lifecycle, LifecycleError, State};
 /// The runner's sockets and files inside a VM's run directory.
 pub mod paths {
     pub const AGENT_SOCK: &str = "agent.sock";
+    /// A Nitro guest's attested session, relayed to its vsock port 1026.
+    pub const SESSION_SOCK: &str = "session.sock";
     pub const LIFECYCLE_SOCK: &str = "lifecycle.sock";
     pub const CONTROL_SOCK: &str = "control.sock";
     pub const CONSOLE_LOG: &str = "console.log";

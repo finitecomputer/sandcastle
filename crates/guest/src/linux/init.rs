@@ -62,6 +62,9 @@ impl Lifecycle {
     }
 }
 
+/// Opened sessions waiting for the agent at once.
+const SESSIONS_QUEUE: usize = 16;
+
 /// The longest the guest waits for its last event to be recorded.
 const RECORDED_WAIT_MS: u64 = 2000;
 
@@ -180,6 +183,21 @@ fn run(
 
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(io("the runtime"))?;
     let listener = sys::vsock_listen(sandcastle_wire::PORT_AGENT, true).map_err(io("listening for the agent"))?;
+    // A guest whose measured kernel line requires the attested session
+    // takes the agent's work only over it (docs/nitro.md); the word with no
+    // NSM to attest by refuses the boot.
+    let session_required = cmdline.split_whitespace().any(|w| w == sandcastle_wire::SESSION_ARG);
+    let sessions = if session_required {
+        if !sealed {
+            return Err(InitError::Refused("the kernel line requires an attested session, and this guest has no NSM".into()));
+        }
+        let guest = sandcastle_session::Guest::new().map_err(|e| InitError::Refused(format!("the session's key: {e}")))?;
+        let (tx, rx) = tokio::sync::mpsc::channel(SESSIONS_QUEUE);
+        super::session::listen(std::sync::Arc::new(guest), tx).map_err(io("listening for sessions"))?;
+        Some(rx)
+    } else {
+        None
+    };
     // Every process this thread forks from now on is in the workload's PID
     // namespace; the first, the entrypoint, is its PID 1. The runtime runs
     // on this thread alone, so every fork is from here.
@@ -189,7 +207,7 @@ fn run(
         let mut child = exec::spawn_entrypoint(&entrypoint).map_err(io("starting the entrypoint"))?;
         let pid = child.id().expect("a running child has a pid");
         let mnt = std::fs::File::open(format!("/proc/{pid}/ns/mnt")).map_err(io("the workload's mount namespace"))?;
-        let ctx = Arc::new(Ctx::new(OwnedFd::from(mnt), pid as libc::pid_t));
+        let ctx = Arc::new(Ctx::new(OwnedFd::from(mnt), pid as libc::pid_t, session_required));
         // SAFETY: `listener` is the vsock socket just bound, owned by the
         // AsyncFd until it drops, so the fd stays open and the same.
         let listener =
@@ -209,7 +227,7 @@ fn run(
         ];
         let status = tokio::select! {
             status = child.wait() => status.map_err(io("waiting for the entrypoint"))?,
-            never = agent::serve(listener, ctx) => match never {},
+            never = agent::serve(listener, sessions, ctx) => match never {},
         };
         // The entrypoint is gone, and with it its PID namespace: its last
         // output, then its exit, then power off, as a container stops when
