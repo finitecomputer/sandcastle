@@ -264,7 +264,17 @@ Outside the parent:
 - an email in an invite is the invite's word, not verified;
 - whoever can change the zone's DNS (its DNS host's account, or a token
   for the zone) can change the CAA records and get certificates for the
-  home's names by DNS-01.
+  home's names by DNS-01;
+- **the hosted platform that adds private agents (preview, so Finite) can
+  start new accounts at the home, and never get into an existing one.**
+  Its admin asks the home's door, signed with the one key the door trusts
+  (`passkeys.inviter`), for an invite for its signed-in operator's own
+  email. The door makes one only for an email with no account there, and
+  answers "sign in" for any other; every later passkey on an account needs
+  one of its own (fragment#1449, and the platform's side on master). So
+  whoever holds that key, or runs that platform, can start an account in
+  any email's name that has none yet, and make its first passkey from the
+  invite before its person does.
 
 ## Not verified
 
