@@ -1,10 +1,13 @@
 //! The home's answer to its front door's "may I get a certificate for
 //! this name?" (Caddy's on-demand TLS `ask`; docs/nitro-home.md, "Front
-//! door"). Yes for the platform's own host, and for a fragment's,
-//! `<label>.<suffix>`, that the cell says exists (anything but its 404 for
-//! a host no fragment holds); no for every other name. So a name nobody
-//! made gets no certificate, and Let's Encrypt's weekly limit for the
-//! registered domain is spent on real names alone.
+//! door"). Yes for the platform's own host, and for a fragment's or a
+//! computer's, `<label>.<suffix>`, that the cell says exists (anything but
+//! its 404 for a host no fragment or computer holds); no for every other
+//! name. So a name nobody made gets no certificate, and Let's Encrypt's
+//! weekly limit for the registered domain is spent on real names alone. A
+//! computer's origin (`<24 hex>--computer`, its screen's) answers 404 at
+//! its root whether or not it exists, so it is asked at a port's path,
+//! where only a computer that exists answers otherwise.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -48,12 +51,27 @@ pub fn kind(a: &Ask, name: &str) -> Option<bool> {
     ok.then_some(false)
 }
 
-/// The cell's status for `GET /` on `name`, through its own listener.
+/// A computer's origin's label: 24 hex digits, then `--computer`.
+pub fn is_computer(label: &str) -> bool {
+    label.strip_suffix("--computer").is_some_and(|h| h.len() == 24 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Where the cell is asked about `name`: a fragment's root, or a
+/// computer's port path (the cell's 404 there means no such computer).
+pub fn probe_path(name: &str) -> &'static str {
+    match name.split_once('.') {
+        Some((label, _)) if is_computer(label) => "/p/0/",
+        _ => "/",
+    }
+}
+
+/// The cell's status for `GET <probe_path>` on `name`, through its own
+/// listener.
 fn probe(cell: SocketAddr, name: &str) -> std::io::Result<u16> {
     let mut s = TcpStream::connect_timeout(&cell, PROBE_TIMEOUT)?;
     s.set_read_timeout(Some(PROBE_TIMEOUT))?;
     s.set_write_timeout(Some(PROBE_TIMEOUT))?;
-    s.write_all(format!("GET / HTTP/1.1\r\nHost: {name}\r\nX-Forwarded-Host: {name}\r\nX-Forwarded-Proto: https\r\nConnection: close\r\n\r\n").as_bytes())?;
+    s.write_all(format!("GET {} HTTP/1.1\r\nHost: {name}\r\nX-Forwarded-Host: {name}\r\nX-Forwarded-Proto: https\r\nConnection: close\r\n\r\n", probe_path(name)).as_bytes())?;
     let mut line = String::new();
     BufReader::new(s).take(1024).read_line(&mut line)?;
     line.split(' ').nth(1).and_then(|c| c.parse().ok()).ok_or_else(|| std::io::Error::other("no status"))
@@ -107,6 +125,11 @@ mod tests {
             assert_eq!(kind(&a, no), None, "{no}");
         }
         assert!(!allowed(&a, "todo--k3x9.home.example.com"), "a cell that does not answer says no");
+        assert_eq!(probe_path("todo--k3x9.home.example.com"), "/");
+        assert_eq!(probe_path("0123456789abcdef01234567--computer.home.example.com"), "/p/0/", "a computer is asked at a port");
+        for not in ["0123456789abcdef0123456--computer", "0123456789abcdef012345678--computer", "zz23456789abcdef01234567--computer", "0123456789abcdef01234567--computers"] {
+            assert!(!is_computer(not), "{not}");
+        }
     }
 
     // Goal: a fragment's name is yes when the cell serves it, no on its

@@ -13,7 +13,8 @@
 //   curl -s localhost:<control>/plan -d '[{"go":"https://…"},{"click":"button"}]'
 //
 // Steps: go (a URL), wait (a CSS selector), fill ([selector, text]), click
-// (a selector), waitUrl (a regex), text (a selector: its text back),
+// (a selector), waitUrl (a regex), text (a selector: its text back), shot
+// ([file, width, height]: a PNG of the page),
 // eval (an expression: its value back), sleep (ms), credentials (each
 // device's), addAuthenticator (another device), removeAuthenticator (the
 // oldest device, lost with its passkeys). Each answers with what
@@ -22,8 +23,7 @@
 // profile's.
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 
 const [chrome, cdpPort, controlPort, profile] = process.argv.slice(2);
 const proc = spawn(chrome, [
@@ -105,6 +105,15 @@ async function step(st) {
   if (st.text) return { text: await until(st.text, () => evaluate(`document.querySelector(${q(st.text)})?.innerText`)) };
   if (st.eval !== undefined) return { value: await evaluate(st.eval) };
   if (st.sleep) { await sleep(st.sleep); return { slept: st.sleep }; }
+  // a screenshot of the page to a file (PNG), at a width of its own
+  if (st.shot) {
+    const [path, width, height] = st.shot;
+    await s("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width < 600 });
+    await sleep(500);
+    const { data } = await s("Page.captureScreenshot", { format: "png" });
+    writeFileSync(path, Buffer.from(data, "base64"));
+    return { shot: path };
+  }
   if (st.credentials) {
     const out = [];
     for (const authenticatorId of authenticators) {

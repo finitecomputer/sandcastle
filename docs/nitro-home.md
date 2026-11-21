@@ -130,12 +130,25 @@ the home's CID), and celld reaches the engine as it reaches the krun engine
 (`HOME_ENGINE=none`), fragments and apps work, and a computer is refused,
 typed.
 
+## Phase 1's acceptance
+
+| # | What | Result |
+|---|---|---|
+| 1 | From a browser: sign in, make an agent, chat, a real reply | **Pass.** A passkey sign-in; the agent made from the shell; its greeting and replies from GLM-5.3 Flash through the platform's model route |
+| 2 | The agent's computer is a confidential sandbox from our image; its terminal works | **Pass.** Lane A's engine starts it from our Hermes image's measured root (arm64, Hermes v0.23.2). In the chat, the agent's terminal answers `aarch64`, `/dev/nsm` present, 2 CPUs, 5,924 MiB. Its screen (the desktop, through the engine's ports over the bridge) shows |
+| 3 | The agent sleeps and wakes with its data; the home restarts and everything is still there | **Pass.** A file the agent wrote survived a computer restart (save, new VM, restore) and a restart of the home (new VM, restore). The home restart lost the last minute of the computer's changes (below) |
+| 4 | A fragment app deploys from the CLI and loads | **Pass** (below) |
+| 5 | Numbers | Below |
+| 6 | What the parent can still see or do | Below |
+
 ## Results (2026-11-21, one run each)
 
-All of these ran on one `m8g.xlarge` parent, with a 2-vCPU, 4 GiB
-confidential home (`cpu_overcommit` off). The browser was headless Chrome
-on the operator's machine, reaching the home over the public internet, with
-a CDP virtual authenticator (CTAP2, user verification).
+The home's own rows ran on one `m8g.xlarge` parent, and the computers' on
+the same parent resized to `m8g.2xlarge` (pool 22 GiB). The home is a
+2-vCPU, 4 GiB confidential sandbox (`cpu_overcommit` off); a computer is
+2 vCPU, 6 GiB, the cell's own size. The browser was headless Chrome on the
+operator's machine, reaching the home over the public internet, with a CDP
+virtual authenticator (CTAP2, user verification).
 
 | What | Result |
 |---|---|
@@ -158,6 +171,12 @@ a CDP virtual authenticator (CTAP2, user verification).
 | An invite for an email that has an account | refused |
 | KMS refused an image the policy did not name | refused, then released once its own PCR0 was pinned |
 | A canary written in the home, searched for in the disk files on the parent | data disk **0**; tmpfs 0; the control written to the plain scratch layer: 4,096 |
+| **An agent's first start** (the cell's `start` event: fresh) | its VM ready **141 ms** after the start began; Hermes heard at 2.6 s; its first turn begun at 3.8 s. The greeting then took "8 s, 3 steps" |
+| **The first reply, cold:** from the agent's making in the shell to its greeting | about 12 s |
+| **A warm reply:** from sending to the reply on the page | **4.1 s** ("worked for 2 to 3 s") |
+| **A wake:** the computer asleep, a message sent, to the reply on the page | **8.1 s**. The cell's `start` event: VM up 1.0 s, data restored from its save (2.7 MB) at 1.3 s, Hermes heard at 1.75 s, its turn begun at 2.9 s |
+| Settings → Restart computer (save, new VM, restore) | Awake again in 5.1 s; the file kept |
+| The home restarted with the computer awake | the platform answering in 11.0 s; the next message woke a new VM ("up 0 min") with the file, 7.1 s from send to reply |
 
 ## What the parent can still see or do
 
@@ -177,6 +196,15 @@ Each item is with the design PR that closes it
 | 9 | It can stop, kill, refuse, delay or throttle the home: availability, never content | Inherent |
 | 10 | The scratch disk (the overlay's upper layer) is plain on the parent. The home writes nothing secret there (the canary above), but a future change could | PR 7, the scratch disk sealed |
 
+**The computers' side** (lane A's engine; nitro-spike.md's leaks):
+
+| # | What | Closed by |
+|---|---|---|
+| 11 | **The engine's egress proxy on the parent reads every intercepted request in plaintext**: the computer's calls to the platform (its turns, its chats' records, the model route) and its saves and restores (`backups.sandbox.internal`, the whole of its `/data`). It then relays them to the home over vsock | PR 8, egress and its intercepts inside the boundary (TLS to the home, ended in the home) |
+| 12 | **The engine can run any command in a computer** (exec over vsock), and picks its image and environment | PR 6, the attested control channel |
+| 13 | The computer's scratch disk is plain on the parent; its `/data` lives in its saves in the bucket, unsealed | PR 7 (scratch), and FPAC's sealed disk in place of the saves (PR 5) |
+| 14 | A home restart reaps its computers without a final save ("changes made in the 1 minute before it stopped weren't kept") | Not a leak: the home's stop could sleep its computers first |
+
 Outside the parent:
 
 - the operator's machine saw every secret it sealed;
@@ -185,8 +213,10 @@ Outside the parent:
 
 ## Not verified
 
-- Computers: lane A's engine is not yet bridged into the home, so no agent
-  ran here (acceptance 1 to 3 wait on it).
+- The computer's idle sleep (the seat's) was not waited for: the wakes
+  above follow a computer restart, a home restart and a reap.
+- A second computer; a computer's own disk past its saves (FPAC's sealed
+  disk is not in this path).
 - Adding a second passkey through its page's one button. Chrome attaches
   every virtual authenticator to the ceremony, and one holding an excluded
   credential refuses the whole `create()`. So the step ran end to end
