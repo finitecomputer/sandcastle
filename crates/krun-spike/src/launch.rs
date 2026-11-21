@@ -120,6 +120,7 @@ pub fn start_probe(layout: &Layout, spec: Spec) -> Result<Running, Error> {
         kernel_args: vec![],
         seccomp: None,
         start: spec.start,
+        nitro: None,
     };
     config.validate().map_err(|e| Error::msg(format!("{}: {e}", spec.id)))?;
     let config_path = run_dir.join(sandcastle_vm::paths::CONFIG);
