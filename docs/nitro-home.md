@@ -7,95 +7,187 @@
 
 ## In plain words
 
-A **home** is one organisation's Fragment: celld running fragment's real
-cell, with its sign-in, its files and its secrets, inside one
-confidential Nitro sandbox of its own. The parent EC2 instance boots it
-and carries its bytes, but cannot read its memory. Its computers (lane A's
-work) are sibling sandboxes on the same parent.
+A **home** is one organisation's Fragment, inside one confidential Nitro
+sandbox of its own. It runs celld with fragment's real cell, its sign-in,
+its files and its secrets. The parent EC2 instance boots it and carries its
+bytes, but cannot read its memory. Its computers (lane A's work) are
+sibling sandboxes on the same parent.
 
-A person reaches the home from a browser over the owner's tailnet. The
-home is a tailnet node itself, and TLS ends inside it, so the parent
-carries only WireGuard packets. The home's secrets come to it sealed: KMS
-releases their key only to the home's own image, measured by its PCR0.
-Its local disk is encrypted with a key KMS releases the same way. Its
-durable state is in an S3 bucket only the home holds credentials for.
+A person reaches the home from a browser over public HTTPS. The parent
+forwards port 443 to the home untouched. The home ends TLS itself, with
+certificates it gets itself from Let's Encrypt (TLS-ALPN-01), so the parent
+carries ciphertext.
+
+People sign in with their own passkeys, checked by the home's identity
+door, so nobody else can sign in as them, the home's operators included.
+A first passkey comes only with a one-time invite. A later one needs the
+account's own passkey, or one of its recovery codes.
+
+The home's secrets come to it sealed: KMS releases their key only to the
+home's own image, measured by its PCR0. Its local disk is encrypted with a
+key KMS releases the same way. Its durable state is in an S3 bucket, and
+only the home holds the bucket's credentials.
 
 ## What runs in the home
 
 | Piece | What it is | Where its state is |
 |---|---|---|
-| celld | The node (fork's `selfhost` line), running the cell's release build, on loopback behind nginx | The fleet bucket (S3); its work files on the encrypted disk |
-| The cell | fragment master's release build, deployed by the home itself at boot when its release changed | The bucket |
-| The identity door | fragment's `crates/identity-door`: sign-in through tsidp, the tailnet's OpenID Connect provider | None (codes in memory) |
-| macrofiche | The fragments' git, the code-store contract | The encrypted disk |
-| OpenBao | celld's secrets backend, in memory (`-dev`), seeded from the sealed bundle at each boot; its root token revoked once the cell's is minted | Memory |
-| nginx | The front door: TLS for the platform, its fragments and the door, ended here | None |
-| tailscaled | The home as a node of the owner's tailnet | The encrypted disk |
+| celld | The node (the fork's `selfhost` line), running the cell's release build, on loopback behind Caddy | The fleet bucket (S3); its work files on the encrypted disk |
+| The cell | fragment master's release build. The home deploys it to the bucket at boot whenever its release changed | The bucket |
+| The identity door | fragment's `crates/identity-door` in its passkey mode, at `<platform>/__door`, playing WorkOS's endpoints to the cell | The encrypted disk (accounts, public keys, hashes) |
+| macrofiche | The fragments' git, the code-store contract, at `<platform>/__git` (the CLI and computers reach it there) | The encrypted disk |
+| OpenBao | celld's secrets backend, in memory (`-dev`), seeded from the sealed bundle at each boot; its root token is revoked once the cell's is minted | Memory |
+| Caddy | The front door: TLS ended here, its certificates got by TLS-ALPN-01 (the platform's at the start, a fragment's on its first visit, once `nitro-home-guest ask` says the cell holds that name) | The encrypted disk |
 
 ## A boot
 
 The parent's launcher (`nitro-home up`, a systemd service) boots the
-sandbox: sandcastle's guest as init, the home's root under dm-verity (its
-root hash and the home's KMS key id on the measured command line), a
-fresh scratch disk for the overlay, and the home's data disk. The
-workload (`host/entry.sh`) then:
+sandbox with:
+
+- sandcastle's guest as init;
+- the home's root under dm-verity, with its root hash and the home's KMS
+  key id on the measured command line;
+- a fresh scratch disk for the overlay;
+- the home's data disk.
+
+The workload (`host/entry.sh`) then:
 
 1. sets the clock from the NSM;
 2. prints an attestation document, whose PCR0 the key policy names;
-3. opens the sealed bundle: its key from KMS over TLS the guest ends
-   (`nitro-key wake`), its files to a tmpfs;
-4. opens the data disk: dm-crypt under a key from KMS (`nitro-key new` on
-   the first boot, its wrapped form written to the disk's first block;
-   `nitro-key wake` after);
-5. seeds OpenBao, then starts macrofiche, the door, tailscaled and nginx;
-6. deploys the release to the bucket when it changed, then starts celld.
+3. opens the sealed bundle: its key comes from KMS over TLS the guest ends
+   (`nitro-key wake`), and its files go to a tmpfs;
+4. opens the data disk with dm-crypt, under a key from KMS. On the first
+   boot `nitro-key new` makes it and writes its wrapped form to the disk's
+   first block; later boots use `nitro-key wake`;
+5. seeds OpenBao, then starts macrofiche, the door and the certificate
+   check;
+6. deploys the release to the bucket when it changed, then starts celld;
+7. starts Caddy last, once what it lets in is ready behind it.
 
-Any service that exits takes the home down, and the service starts it
-again. A stop is graceful: celld first, so its last writes are in the
-bucket, then the rest, the disk closed last.
+Any service that exits takes the home down, and the systemd service
+starts it again. A stop is graceful: celld goes first, so its last writes
+reach the bucket, then the rest, and the disk is closed last.
 
 ## Secrets
 
-The bundle (`src/sealed.rs`) is made on the operator's machine by
-`nitro-home-seal`: every file of a directory, sealed with AES-256-GCM
-under a fresh key K. K goes to KMS's `Encrypt` under the home's key; the
-parent hands the home the bundle as it came. The key's policy:
+`nitro-home-seal` makes the bundle (`src/sealed.rs`) on the operator's
+machine. It seals every file of a directory with AES-256-GCM under a fresh
+key K, and K goes to KMS's `Encrypt` under the home's key. The parent hands
+the home the bundle as it came.
 
-- the project's administrators may manage the key and `Encrypt`, never
-  `Decrypt` or `GenerateDataKey`;
-- the parent's role may `Decrypt` and `GenerateDataKey` only for a
+The key's policy:
+
+- The project's administrators may manage the key and `Encrypt`, never
+  `Decrypt` or `GenerateDataKey`.
+- The parent's role may `Decrypt` and `GenerateDataKey` only for a
   recipient document whose PCR0 is the home image's. KMS then answers only
-  inside an envelope to the document's key, and `nitro-key` takes that
-  answer only from KMS's own TLS, which ends in the guest.
+  inside an envelope to the document's key. `nitro-key` takes that answer
+  only from KMS's own TLS, which ends in the guest.
 
-The bundle holds the cell's store secrets (the host secret, the code
-store's key, the door client's secret, the model key), the door's own
-secrets, the TLS key and chain, the fleet bucket's credentials (an IAM
-user whose policy names that bucket alone), and on a first boot the
-tailnet's auth key.
+The bundle holds:
+
+- the cell's store secrets: the host secret, the code store's key, the
+  door client's secret and the model key;
+- the door's own secret;
+- the fleet bucket's credentials, for an IAM user whose policy names that
+  bucket alone, so the parent's role cannot reach it.
+
+`cargo xtask home render` (fragment, `nitro/home-release`) writes what the
+image carries and what the bundle seals, apart. Nothing in the image is
+secret.
+
+## The release rule
+
+A new image has a new PCR0, and the key releases nothing to it until the
+policy names that PCR0. `host/pin-pcr0.sh` does that on the operator's
+machine:
+
+1. it boots the image once;
+2. it verifies the home's own attestation document down to AWS's pinned
+   root (`nitro-verify`);
+3. it puts the document's PCR0 into the policy, keeping the one before
+   beside it, for a rollback.
 
 ## Network
 
 The home's NIC is a tap with plain NAT on the parent (`src/net.rs`):
-every private, shared, link-local and loopback range refused (the parent's
-metadata service, its VPC, the parent's own addresses), nothing inbound.
+
+- Every private, shared, link-local and loopback range is refused,
+  including the parent's metadata service, its VPC and its own addresses.
+- Inbound, only the conf's ports (443) are forwarded, untouched, from the
+  parent's own addresses.
+
 The home is our own measured code, so it takes no egress proxy. Its
-traffic: WireGuard (the tailnet), KMS, S3 and the model API over TLS the
-home ends, and DNS (the names it resolves are the parent's to see).
+traffic is KMS, S3, the model API and Let's Encrypt, all over TLS the home
+ends, plus DNS.
 
 ## Computers
 
-Lane A's engine (sandcastle's Nitro backend) runs on the parent;
+Lane A's engine (sandcastle's Nitro backend) runs on the parent.
 `sandcastle-bridge` carries its sockets over vsock (ports 5000 to 5002 on
-the home's CID), and celld reaches it as it reaches the krun engine
-(`CELLD_CONTAINER_ENGINE=krun:/run/sandcastle/engine.sock`). With no
-engine (`HOME_ENGINE=none`), fragments and apps work and a computer is
-refused, typed.
+the home's CID), and celld reaches the engine as it reaches the krun engine
+(`CELLD_CONTAINER_ENGINE=krun:/run/sandcastle/engine.sock`). With no engine
+(`HOME_ENGINE=none`), fragments and apps work, and a computer is refused,
+typed.
 
-## Results
+## Results (2026-11-21, one run each)
 
-(Filled in by phase 1's runs.)
+All of these ran on one `m8g.xlarge` parent, with a 2-vCPU, 4 GiB
+confidential home (`cpu_overcommit` off). The browser was headless Chrome
+on the operator's machine, reaching the home over the public internet, with
+a CDP virtual authenticator (CTAP2, user verification).
+
+| What | Result |
+|---|---|
+| Launch to the guest's ready | 0.72 s |
+| Secrets opened (two KMS round trips through `nitro-key`) | 0.95 to 1.1 s after launch |
+| The encrypted disk mounted | 1.2 to 1.7 s |
+| OpenBao seeded | 2.3 to 3.4 s |
+| celld serving: a warm restart, release unchanged | 3.2 s |
+| celld serving: the release changed (deployed first) | 5.7 to 6.4 s; the deploy itself 1.4 to 2.0 s |
+| **Launch to the front door answering with a valid certificate:** a warm restart | **3.4 s** |
+| Launch to the front door answering: a first boot, its certificate got by TLS-ALPN-01 | 10.8 s |
+| `systemctl restart`, to the platform answering again, seen from the operator's machine | 12.9 s (the graceful stop is 5 s of it) |
+| The parent rebooted, to the home serving again by itself | about 31 s |
+| A passkey enrolled from an invite, then a sign-in to the platform with it | both pass; the account and its passkey kept across door and home restarts |
+| `fragment login` approved at `/cli` by that session; `fragment init <app> --template todo` | logged in; deployed in 6.0 s |
+| The app's first visit, its certificate got on demand | 4.6 s; a made-up subdomain gets no certificate |
+| A todo item written, the home restarted, the item read back | **there**, the CLI's key still valid, the person still signed in |
+| KMS refused an image the policy did not name | refused, then released once its own PCR0 was pinned |
+| A canary written in the home, searched for in the disk files on the parent | data disk **0**; tmpfs 0; the control written to the plain scratch layer: 4,096 |
 
 ## What the parent can still see or do
 
-(Filled in at the end of phase 1.)
+Each item is with the design PR that closes it
+([nitro-spike.md](nitro-spike.md), "Design").
+
+| # | What | Closed by |
+|---|---|---|
+| 1 | **It can run any command in the home** (sandcastle's guest agent takes exec over vsock), and it picks the workload's entrypoint and environment, which PCR0 does not measure. Either way it can have the measured image fetch the home's secrets and hand them out. This is the largest hole: everything below matters only once it is closed | PR 6, the attested control channel. The entrypoint also has to come from the measured command line, with no exec except on that channel |
+| 2 | **Whoever ships a new home image can ship one that skips the passkey check**, or anything else: the project's administrators can name any PCR0 in the key's policy (`kms:Put*`), and AWS can too | PR 10, a release rule we cannot change alone |
+| 3 | **It can roll back or swap the home's data disk** (an older copy, or another home's under the same key). It cannot read it: AES-XTS under a key from KMS. The encryption is not authenticated, so it can also corrupt blocks | PR 9 (rollback), with dm-integrity |
+| 4 | **The fleet bucket is unsealed.** The parent's role has no access, and the home's traffic to S3 is TLS the home ends. But whoever holds AWS administration, or the home's IAM key, reads every object, and can roll the bucket back | The sealed fleet bucket (phase 2) |
+| 5 | **It could get a certificate for the home's names**: TLS-ALPN-01 validates whoever answers on the address the DNS names, and the parent holds that address. It could then stand between browsers and the home | Not a design PR: a CAA record naming the home's own ACME account (`accounturi`, RFC 8657), whose key never leaves the home |
+| 6 | It sees traffic metadata: clients' addresses, the names they ask for (SNI, so the fragments' names), sizes and timing, and the names the home resolves | Inherent to the parent carrying the bytes; DNS over TLS would hide the last |
+| 7 | It sees the home's log lines: the boot's steps, celld's warnings, the attestation document. The door's, macrofiche's and celld's full logs stay on the encrypted disk | Keep the parent's view to the boot's steps |
+| 8 | It sees phase 1's invite link (`fragment-identity-door invite`, run over its own exec), and could use it first | Invites made and handed over on the attested channel (PR 6), to the owner alone |
+| 9 | It can stop, kill, refuse, delay or throttle the home: availability, never content | Inherent |
+| 10 | The scratch disk (the overlay's upper layer) is plain on the parent. The home writes nothing secret there (the canary above), but a future change could | PR 7, the scratch disk sealed |
+
+Outside the parent:
+
+- the operator's machine saw every secret it sealed;
+- OpenRouter sees the agents' prompts (the model route);
+- an email in an invite is the invite's word, not verified.
+
+## Not verified
+
+- Computers: lane A's engine is not yet bridged into the home, so no agent
+  ran here (acceptance 1 to 3 wait on it).
+- Adding a second passkey, and recovery by a code. Both are unit-tested
+  (store, flows, refusals), but neither ran end to end: one virtual
+  authenticator refuses to make a second credential for the same account
+  (`excludeCredentials`).
+- One run each; no load, no density, no x86 parent.
+- The home's ACME account is Let's Encrypt's production. Its rate limits
+  were not hit: three certificates were issued for finite.house names today (the unused DNS-01 wildcard among them).
