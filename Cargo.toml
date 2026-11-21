@@ -3,7 +3,7 @@
 # (docs/krun-spike.md, Dependencies).
 [workspace]
 resolver = "2"
-members = ["crates/wire", "crates/vm", "crates/guest", "crates/rootfs", "crates/egress", "crates/engine", "crates/node", "crates/fake-engine", "crates/docker-engine", "crates/docker-relay", "crates/krun-spike"]
+members = ["crates/wire", "crates/vm", "crates/guest", "crates/rootfs", "crates/egress", "crates/engine", "crates/node", "crates/fake-engine", "crates/docker-engine", "crates/docker-relay", "crates/krun-spike", "crates/nitro-attest", "crates/session"]
 
 [workspace.package]
 edition = "2021"
@@ -15,6 +15,8 @@ sandcastle-vm = { path = "crates/vm" }
 sandcastle-rootfs = { path = "crates/rootfs" }
 sandcastle-egress = { path = "crates/egress" }
 sandcastle-engine = { path = "crates/engine" }
+sandcastle-nitro-attest = { path = "crates/nitro-attest" }
+sandcastle-session = { path = "crates/session" }
 sandcastle-node = { path = "crates/node" }
 sandcastle-fake-engine = { path = "crates/fake-engine" }
 sandcastle-docker-engine = { path = "crates/docker-engine" }
@@ -32,6 +34,16 @@ flate2 = { version = "=1.1.11", default-features = false, features = ["rust_back
 tar = { version = "=0.4.46", default-features = false }
 ruzstd = "=0.9.1"
 rcgen = "=0.14.10"
+# The Nitro attestation verifier's: ring for SHA-256 and the COSE key,
+# webpki for the certificate chain, both already in the lock through
+# rustls; time for its tests' certificates, already there through rcgen.
+ring = "=0.17.14"
+rustls-pki-types = { version = "=1.16.0", features = ["std"] }
+rustls-webpki = { version = "=0.103.16", default-features = false, features = ["ring", "std"] }
+time = "=0.3.55"
+# The attested session's Noise (crates/session): pure Rust, for the
+# guest's static musl build. Not its `std`, which turns ring on.
+snow = { version = "=0.10.0", default-features = false, features = ["default-resolver", "use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"] }
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
