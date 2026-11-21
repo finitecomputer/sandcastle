@@ -3,6 +3,7 @@
 //! mounted where) are pure and tested on any host; the system calls are
 //! Linux's (`linux`).
 
+pub mod dm;
 pub mod env;
 pub mod layer;
 pub mod mounts;

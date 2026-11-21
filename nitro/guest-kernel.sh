@@ -17,8 +17,10 @@
 #    measured command line), loop and FUSE (FPAC's disks), writes to a mounted
 #    block device allowed (FPAC's daemon holds its loop device open for
 #    writing while ext4 is mounted on it; Firecracker's CI config turns this
-#    off), and nothing built as a module, since the guest boots from an
-#    initrd with no module tree.
+#    off), dm-crypt with AES-XTS (the sealed scratch disk: a key the guest
+#    makes at boot and never shows; the CPU's AES instructions for it), and
+#    nothing built as a module, since the guest boots from an initrd with
+#    no module tree.
 #
 # Reproducible: the build's user, host, time and counter are fixed (the
 # time is the source commit's own), and LOCALVERSION is set empty, so the
@@ -75,8 +77,17 @@ CONFIG_EFI_STUB=y
 CONFIG_ACPI=y
 CONFIG_DEVTMPFS=y
 CONFIG_BLK_DEV_INITRD=y
+CONFIG_DM_CRYPT=y
+CONFIG_CRYPTO_XTS=y
+CONFIG_CRYPTO_AES=y
 CONFIG_MODULES=n
 EOF
+# The CPU's AES for dm-crypt, by architecture (a symbol of another one
+# would be dropped, and the check below refuses a dropped line).
+case "$ARCH" in
+    aarch64) echo CONFIG_CRYPTO_AES_ARM64_CE_BLK=y >> spike.config ;;
+    x86_64) echo CONFIG_CRYPTO_AES_NI_INTEL=y >> spike.config ;;
+esac
 
 cd linux
 export KBUILD_BUILD_USER=builder KBUILD_BUILD_HOST=sandcastle KBUILD_BUILD_VERSION=1 LOCALVERSION=

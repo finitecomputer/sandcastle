@@ -20,6 +20,8 @@ The stack, each a draft PR on `node`:
    per node; images become measured roots.
 5. **The bridge** (`nitro/vsock-bridge`): the engine reached from a home
    that runs in a Nitro Sandbox of its own, over the home's vsock.
+6. **The sealed scratch disk** (`nitro/sealed-scratch`): a computer's
+   writable layer is ciphertext on the parent.
 
 ## The guest
 
@@ -68,10 +70,14 @@ each built the same way every time, because each is measured:
   lines (the NSM, dm-verity with `dm-mod.create=`, no modules). The build's
   user, host, time and counter are fixed, so the same source and config
   make the same bytes (the spike built it twice to the same SHA-256).
-- **The initrd**: the engine makes it at open from its `guest` binary, as
-  it makes the boot disk for libkrun: a newc archive with every owner,
-  mode and time fixed (`sandcastle_rootfs::initrd`), so the same guest
-  makes the same bytes.
+- **The guest's mke2fs** (`nitro/guest-mke2fs.sh`): e2fsprogs at a pinned
+  release (kernel.org's SHA-256), built statically with Alpine's musl
+  toolchain in an image pinned by digest. The guest formats its sealed
+  scratch disk with it (below).
+- **The initrd**: the engine makes it at open from its `guest` binary and
+  that mke2fs, as it makes the boot disk for libkrun: a newc archive with
+  every owner, mode and time fixed (`sandcastle_rootfs::initrd`), so the
+  same inputs make the same bytes.
 
 PCR0 measures the kernel, the initrd and the command line; the command
 line names the image's verity root hash. So a sandbox's PCR0 is a
@@ -144,9 +150,10 @@ krun node.
   table on the kernel's line, a vsock CID of the slot's own (3 plus the
   slot), no balloon (a sandbox's memory is the pool's until it stops).
   Memory under 256 MiB or odd is refused before anything is reserved.
-- **Snapshots** freeze the guest's filesystems through its agent and copy
-  the scratch disk, as on krun. The parent can read that copy: the
-  scratch disk is not sealed here.
+- **Snapshots** are refused, and so is a start from one, and a data disk
+  (below, "The sealed scratch disk"). The cell's sleep goes on without a
+  snapshot when one is refused; a home runs with
+  `FRAGMENT_COMPUTER_SNAPSHOTS=off` and asks for none.
 - **Capacity:** `memory_mib_max` is the operator's, sized to the pool
   less each sandbox's overheads (2 MiB and 16 MiB a device in confidential
   mode; the spike's line 10).
@@ -179,6 +186,30 @@ live per listener. The intercept path is celld's
 `<data dir>/intercepts-<6 hex of sha256(node)>.sock`: run the home's celld
 with a fixed `CELLD_NODE` and give both halves that path.
 
+## The sealed scratch disk
+
+A computer's scratch disk (its overlay's writable layer: everything it
+writes outside `/data`'s saves) is ciphertext on the parent:
+
+- **The key** is 64 random bytes the guest draws at boot (`getrandom`)
+  and hands to the kernel in a dm-crypt table (AES-256-XTS) by
+  device-mapper's ioctls, with the flag that wipes the kernel's copies of
+  the call's buffers; the guest wipes its own. It is never written to a
+  disk, never sent, and dies with the VM. The parent cannot read the
+  guest's memory, so it cannot read the key.
+- **No key release is needed**, because the scratch disk does not outlive
+  the VM: every start makes a new one, and what must outlive it is saved
+  through the cell (`DirectoryBackup`). So there is nothing to snapshot
+  (a copy would be ciphertext no one can open), and a data disk, which
+  outlives its VM by design, is refused on a Nitro node.
+- **The format** is the guest's: the parent hands over a sparse file of
+  the disk's size and nothing on it; the guest makes ext4 on the mapping
+  with the initrd's `mke2fs` (no journal, inode tables left for the
+  kernel to zero, so only a few megabytes are written).
+- **Which guests seal:** every guest with an NSM, that is every Nitro
+  Sandbox; the parent cannot turn it off without changing the guest, and
+  so the initrd and PCR0.
+
 ## What the parent can still see and do
 
 A confidential sandbox keeps its memory from the parent. Everything that
@@ -199,10 +230,10 @@ computer:
    keystrokes.
 3. **Ports.** A connection to a computer's port (the screen's VNC, an
    app) is the engine's TCP socket: the parent sees its bytes.
-4. **Disks.** The scratch and data disks are plain ext4 files on the
-   parent, readable while the computer runs and after. Snapshots copy the
-   scratch disk. Only the image is protected, and only its integrity
-   (dm-verity): its contents are public anyway.
+4. **Disks.** The scratch disk is ciphertext (above, "The sealed scratch
+   disk"); the parent sees which blocks are written and when, not what.
+   The image is protected for integrity only (dm-verity): its contents are
+   public anyway. A Nitro node takes no data disk.
 5. **Metadata:** when each computer starts and stops, its size, its DNS
    names, and the timing and size of everything above.
 
@@ -211,9 +242,10 @@ computer:
 6. **Run commands in a computer.** The guest's agent serves any
    connection to its vsock port, and the parent can open one: this alone
    undoes the memory's protection.
-7. **Change what it relays:** answer or alter an intercepted request, a
-   disk's blocks (the scratch and data disks have no integrity), or an
-   exec's output.
+7. **Change what it relays:** answer or alter an intercepted request, or
+   an exec's output, or scramble the scratch disk's blocks (XTS has no
+   integrity: a changed block reads as garbage, not as the parent's
+   choice).
 8. **Boot something else in a computer's place.** A computer's NSM signs
    its PCRs, but nothing checks them: no one asks a computer for its
    document before trusting it.
@@ -223,9 +255,8 @@ computer:
 computer (the guest makes a key, its NSM document binds it, the home
 checks the PCRs before it talks to it) closes 6, 7 and 8 for exec, and
 carries 1 to 3 end to end if the proxy's TLS ends in the guest or in the
-home instead of on the parent. Disks encrypted by the guest, with a key
-released to an attested guest only, close 4 (the sealed scratch disk,
-not built here).
+home instead of on the parent. 4 is closed for the scratch disk by a
+key the guest makes and keeps.
 
 ## Evidence
 
@@ -242,6 +273,9 @@ this engine in Nitro mode, every sandbox confidential.
   build VM applying its five layers and ending, then each sandbox's start
   (ready in about 500 ms) and end.
 
+- `sealed-scratch.md`: the sealed scratch disk: a planted string found
+  0 times on the parent (8,192 with no seal), and the suite's 23 cases
+  that do not snapshot passing on it.
 - `home-computers.md`: a home in a Nitro Sandbox of its own, on the same
   parent, running its computers on this engine through the bridge:
   Fragment's Hermes image (arm64) as a measured root, an agent made and

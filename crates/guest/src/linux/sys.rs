@@ -231,6 +231,11 @@ pub fn leave_initrd_root() -> io::Error {
             mkdir_p(&format!("/newroot/{d}"))?;
         }
         std::fs::copy("/init", "/newroot/init")?;
+        // The sealed scratch disk's formatter (`seal`), where an initrd
+        // carries one.
+        if std::path::Path::new(super::seal::MKE2FS).exists() {
+            std::fs::copy(super::seal::MKE2FS, format!("/newroot{}", super::seal::MKE2FS))?;
+        }
         let (dot, slash) = (cstr(".")?, cstr("/")?);
         check(unsafe { libc::chdir(dst.as_ptr()) })?;
         // SAFETY: MS_MOVE of the tmpfs onto /, then chroot into it.

@@ -1,7 +1,8 @@
 //! A Nitro Sandbox's initrd (docs/nitro.md): a newc cpio archive (the
 //! kernel's `Documentation/driver-api/early-userspace/buffer-format.rst`)
-//! holding sandcastle's guest as `/init` and the few nodes an init needs,
-//! as the boot disk holds it for libkrun. Every inode, owner, mode and
+//! holding sandcastle's guest as `/init`, the static `mke2fs` it formats
+//! its sealed scratch disk with as `/mke2fs`, and the few nodes an init
+//! needs, as the boot disk holds the guest for libkrun. Every inode, owner, mode and
 //! time is fixed, so the same guest makes the same bytes, and the same
 //! bytes make the same PCR1 and PCR0: the initrd is measured, which a boot
 //! disk is not.
@@ -21,10 +22,12 @@ const CHAR: u32 = 0o020_000;
 /// An archive's largest file: the guest is a few MiB.
 pub const FILE_BYTES_MAX: usize = 64 << 20;
 
-/// The guest's initrd: `/init` and the mount points it uses, and
-/// `/dev/console` so the kernel can open init's console before devtmpfs.
-pub fn guest(init: &[u8]) -> Vec<u8> {
+/// The guest's initrd: `/init`, `/mke2fs`, the mount points the guest
+/// uses, and `/dev/console` so the kernel can open init's console before
+/// devtmpfs.
+pub fn guest(init: &[u8], mke2fs: &[u8]) -> Vec<u8> {
     assert!(!init.is_empty() && init.len() <= FILE_BYTES_MAX);
+    assert!(!mke2fs.is_empty() && mke2fs.len() <= FILE_BYTES_MAX);
     let dir = |path| Entry { path, mode: DIR | 0o755, rdev: (0, 0), data: &[] };
     newc(&[
         dir("dev"),
@@ -34,6 +37,7 @@ pub fn guest(init: &[u8]) -> Vec<u8> {
         dir("run"),
         dir("tmp"),
         Entry { path: "init", mode: FILE | 0o755, rdev: (0, 0), data: init },
+        Entry { path: "mke2fs", mode: FILE | 0o755, rdev: (0, 0), data: mke2fs },
     ])
 }
 
@@ -89,10 +93,20 @@ mod tests {
         assert!(a.windows(10).any(|w| w == b"TRAILER!!!"));
     }
 
-    // Goal: the same guest makes the same bytes; another makes others.
+    // Goal: the same guest and formatter make the same bytes; another of
+    // either makes others; both are in it, executable.
     #[test]
     fn reproducible() {
-        assert_eq!(guest(b"\x7fELF one"), guest(b"\x7fELF one"));
-        assert_ne!(guest(b"\x7fELF one"), guest(b"\x7fELF two"));
+        let (one, two, mkfs) = (b"\x7fELF one", b"\x7fELF two", b"\x7fELF mke2fs");
+        assert_eq!(guest(one, mkfs), guest(one, mkfs));
+        assert_ne!(guest(one, mkfs), guest(two, mkfs));
+        assert_ne!(guest(one, mkfs), guest(one, b"\x7fELF other"));
+        let a = guest(one, mkfs);
+        for (name, body) in [(&b"init\0"[..], &one[..]), (&b"mke2fs\0"[..], &mkfs[..])] {
+            let at = a.windows(name.len()).position(|w| w == name).expect("named");
+            let mode = u32::from_str_radix(std::str::from_utf8(&a[at - 110 + 14..at - 110 + 22]).unwrap(), 16).unwrap();
+            assert_eq!(mode, FILE | 0o755);
+            assert!(a.windows(body.len()).any(|w| w == body));
+        }
     }
 }

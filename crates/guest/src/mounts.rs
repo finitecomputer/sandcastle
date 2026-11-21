@@ -101,10 +101,12 @@ pub fn image_device(cmdline: &str) -> Result<String, &'static str> {
 
 /// The workload's root: the image read-only, a fresh scratch disk as the
 /// overlay's upper layer, so every start begins from the image exactly.
-pub fn run_root(image: &str) -> Vec<Mount> {
+/// `scratch` is the scratch disk itself, or its sealed mapping
+/// (`linux::seal`) on a Nitro Sandbox.
+pub fn run_root(image: &str, scratch: &str) -> Vec<Mount> {
     vec![
         m(image, LOWER, "ext4", Flags { read_only: true, nodev: true, ..Flags::default() }, Some("noload")),
-        m(disks::SCRATCH, SCRATCH, "ext4", Flags::default(), None),
+        m(scratch, SCRATCH, "ext4", Flags::default(), None),
     ]
 }
 
@@ -158,14 +160,17 @@ pub fn workload() -> Vec<Mount> {
 mod tests {
     use super::*;
 
-    // Goal: the image is never mounted writable, and the overlay's layers
-    // are the paths the plan mounts.
+    // Goal: the image is never mounted writable, the scratch layer is the
+    // device it is given (the disk, or a Nitro guest's sealed mapping),
+    // and the overlay's layers are the paths the plan mounts.
     #[test]
     fn image_read_only() {
-        let r = run_root(disks::IMAGE);
+        let r = run_root(disks::IMAGE, disks::SCRATCH);
         assert_eq!(r[0].source, disks::IMAGE);
         assert!(r[0].flags.read_only);
         assert!(!r[1].flags.read_only);
+        assert_eq!(r[1].source, disks::SCRATCH);
+        assert_eq!(run_root("/dev/dm-0", "/dev/dm-1")[1].source, "/dev/dm-1");
         let o = overlay();
         let data = o.data.unwrap();
         assert!(data.contains(LOWER) && data.contains(UPPER) && data.contains(WORK));
@@ -184,8 +189,8 @@ mod tests {
         for bad in ["sandcastle.image=/dev/vdb", "sandcastle.image=/dev/dm-", "sandcastle.image=/dev/dm-1x", "sandcastle.image=/dev/dm-0 sandcastle.image=/dev/dm-1", "sandcastle.image=/dev/dm-1234"] {
             assert!(image_device(bad).is_err(), "{bad}");
         }
-        assert_eq!(run_root("/dev/dm-0")[0].source, "/dev/dm-0");
-        assert!(run_root("/dev/dm-0")[0].flags.read_only);
+        assert_eq!(run_root("/dev/dm-0", disks::SCRATCH)[0].source, "/dev/dm-0");
+        assert!(run_root("/dev/dm-0", disks::SCRATCH)[0].flags.read_only);
     }
 
     #[test]
