@@ -38,14 +38,15 @@ pub struct Ctx {
     connections: AtomicUsize,
     /// Bumped by every freeze, so a timed thaw only thaws its own.
     freezes: AtomicUsize,
-    /// The kernel line's `SESSION_ARG`: the host's own port takes only
-    /// what `host_may`; everything else comes over the attested session.
-    session_required: bool,
+    /// The kernel line's `SESSION_ARG` or `AGENT_NONE_ARG`: the host's own
+    /// port takes only what `host_may`; anything else comes over the
+    /// attested session, or (with no door) not at all.
+    host_restricted: bool,
 }
 
 impl Ctx {
-    pub fn new(mnt: OwnedFd, entry_pid: libc::pid_t, session_required: bool) -> Ctx {
-        Ctx { mnt, entry_pid, processes: AtomicUsize::new(0), connections: AtomicUsize::new(0), freezes: AtomicUsize::new(0), session_required }
+    pub fn new(mnt: OwnedFd, entry_pid: libc::pid_t, host_restricted: bool) -> Ctx {
+        Ctx { mnt, entry_pid, processes: AtomicUsize::new(0), connections: AtomicUsize::new(0), freezes: AtomicUsize::new(0), host_restricted }
     }
 }
 
@@ -191,8 +192,8 @@ async fn connection(fd: OwnedFd, ctx: Arc<Ctx>, session: bool) -> Result<(), Wir
         Ok(r) => r,
         Err(e) => return send(&mut wr, &Reply::error(ErrorKind::Invalid, e.to_string())).await,
     };
-    if ctx.session_required && !session && !host_may(&req) {
-        return send(&mut wr, &Reply::error(ErrorKind::Refused, "this guest takes that only over its attested session")).await;
+    if ctx.host_restricted && !session && !host_may(&req) {
+        return send(&mut wr, &Reply::error(ErrorKind::Refused, "this guest takes that only over its attested session, or not at all")).await;
     }
     match req {
         Request::Ping => send(&mut wr, &Reply::Pong { uptime_ms: sys::uptime_ms() }).await,
