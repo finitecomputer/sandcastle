@@ -128,7 +128,7 @@ say "openbao seeded ($(ls "$S"/store | wc -l) secrets)"
 pids+=($!)
 /usr/local/bin/fragment-identity-door --config $R/door.json 2> $LOG/door.log &
 pids+=($!)
-if [ "${HOME_TAILNET:-on}" = on ]; then
+if [ "${HOME_TAILNET:-off}" = on ]; then
 /usr/local/bin/tailscaled --state=$STATE/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --tun=tailscale0 --no-logs-no-support > $LOG/tailscaled.log 2>&1 &
 pids+=($!)
 for _ in $(seq 100); do [ -S /run/tailscale/tailscaled.sock ] && break; sleep 0.1; done
