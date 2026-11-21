@@ -229,7 +229,7 @@ not built here).
 
 ## Evidence
 
-`docs/nitro-evidence/` holds one real run on a parent (an m8g.xlarge,
+`docs/nitro-evidence/` holds real runs on a parent. First (an m8g.xlarge,
 Amazon Linux 2023, kernel 6.18): celld's engine conformance suite
 (`celld dev` with `CELLD_CONTAINER_ENGINE=krun:<engine.sock>`) against
 this engine in Nitro mode, every sandbox confidential.
