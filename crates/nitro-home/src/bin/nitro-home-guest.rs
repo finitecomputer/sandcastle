@@ -2,6 +2,7 @@
 //!
 //!   nitro-home-guest wrapped                     # the bundle's wrapped key, base64
 //!   nitro-home-guest open --key-file K --out D   # its files under D (new, 0700)
+//!   nitro-home-guest ask --listen A --platform H --suffix S --cell C   # Caddy's on-demand check (ask.rs)
 //!
 //! The bundle is the workload's `HOME_SEALED` (the parent hands it over as
 //! it came, sealed). The key file is what `nitro-key wake --wrapped …`
@@ -11,7 +12,10 @@
 use std::path::Path;
 
 use base64::Engine as _;
-use sandcastle_nitro_home::{files, sealed};
+use sandcastle_nitro_home::{ask, files, sealed};
+
+/// The front door's checks answered at once, at most.
+const ASKS_MAX: usize = 32;
 
 const ENV: &str = "HOME_SEALED";
 
@@ -42,7 +46,32 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("{}", serde_json::json!({"opened": f.len()}));
             Ok(())
         }
-        _ => Err("usage: nitro-home-guest wrapped | open --key-file <file> --out <dir>".into()),
+        Some("ask") => {
+            let listen = flag(args, "--listen").ok_or("--listen")?;
+            let a = ask::Ask {
+                platform: flag(args, "--platform").ok_or("--platform")?.into(),
+                suffix: flag(args, "--suffix").ok_or("--suffix")?.into(),
+                cell: flag(args, "--cell").ok_or("--cell")?.parse().map_err(|_| "--cell: an address")?,
+            };
+            let listener = std::net::TcpListener::bind(listen).map_err(|e| format!("{listen}: {e}"))?;
+            let live = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            // Unbounded by design: it answers for the home's life, at most
+            // ASKS_MAX at once.
+            for conn in listener.incoming() {
+                let Ok(conn) = conn else { continue };
+                if live.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= ASKS_MAX {
+                    live.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    continue;
+                }
+                let (a, live) = (a.clone(), live.clone());
+                std::thread::spawn(move || {
+                    let _ = ask::answer(&a, conn);
+                    live.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                });
+            }
+            Ok(())
+        }
+        _ => Err("usage: nitro-home-guest wrapped | open --key-file <file> --out <dir> | ask --listen <addr> --platform <host> --suffix <suffix> --cell <addr>".into()),
     }
 }
 

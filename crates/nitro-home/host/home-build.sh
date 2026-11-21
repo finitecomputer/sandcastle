@@ -5,7 +5,7 @@
 #   ./home-build.sh <fragment tree> <sandcastle tree>
 #
 # Out, under $OUT (~/home-build/out): bin/ (celld, the identity door,
-# macrofiche and its git, the guest's helpers, OpenBao, tailscale, esbuild),
+# macrofiche and its git, the guest's helpers, OpenBao, Caddy, esbuild),
 # the guest kernel and initrd, and build.json naming each input's pin and
 # each output's SHA-256. Run after parent-ready.sh. One program at a time:
 # the parent's memory outside the sandbox pool is small.
@@ -30,9 +30,10 @@ OPENBAO_VERSION=2.7.2
 # openbao_2.7.2_linux_arm64.tar.gz in the release's checksums.txt, as
 # fragment's crates/devstack/src/openbao_release.rs pins it.
 OPENBAO_SHA256=5b97bf816fa820e5e521abec1db19c6161fcca2f666cf4a84e335089c0e83edd
-TAILSCALE_VERSION=1.104.7
-# pkgs.tailscale.com/stable/tailscale_1.104.7_arm64.tgz.sha256, 2026-11-21.
-TAILSCALE_SHA256=d6bed2720310b328b861f943d7b4016c5358a9bad60575eb51e8143b79068484
+CADDY_VERSION=2.11.9
+# caddy_2.11.9_linux_arm64.tar.gz in the release's caddy_2.11.9_checksums.txt
+# (SHA-512), read 2026-11-21.
+CADDY_SHA512=9e5e76d7888542924de2c25353ae87c5f77e2a22c5b1198633cae13688922282e05383d142599205c88d8d80eee5e967d291214d7abce4835329a191b20dd6e0
 ESBUILD_VERSION=0.28.1
 # npm's dist.integrity for @esbuild/linux-arm64@0.28.1: the esbuild
 # worker-build uses, for `celld deploy`.
@@ -92,11 +93,14 @@ say "the identity door, from fragment's tree"
 ( cd "$fragment" && cargo build -q --release --locked -p fragment-identity-door )
 cp "$fragment/target/release/fragment-identity-door" "$OUT/bin/fragment-identity-door"
 
-say "OpenBao $OPENBAO_VERSION, tailscale $TAILSCALE_VERSION, esbuild $ESBUILD_VERSION"
+say "OpenBao $OPENBAO_VERSION, Caddy $CADDY_VERSION, esbuild $ESBUILD_VERSION"
 fetch "https://github.com/openbao/openbao/releases/download/v$OPENBAO_VERSION/openbao_${OPENBAO_VERSION}_linux_arm64.tar.gz" "$OUT/dl/openbao.tgz" "$OPENBAO_SHA256"
 tar -xzf "$OUT/dl/openbao.tgz" -C "$OUT/bin" bao
-fetch "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_arm64.tgz" "$OUT/dl/tailscale.tgz" "$TAILSCALE_SHA256"
-tar -xzf "$OUT/dl/tailscale.tgz" -C "$OUT/bin" --strip-components=1 "tailscale_${TAILSCALE_VERSION}_arm64/tailscale" "tailscale_${TAILSCALE_VERSION}_arm64/tailscaled"
+curl -sSfL --max-time 600 -o "$OUT/dl/caddy.tgz.part" "https://github.com/caddyserver/caddy/releases/download/v$CADDY_VERSION/caddy_${CADDY_VERSION}_linux_arm64.tar.gz"
+echo "$CADDY_SHA512  $OUT/dl/caddy.tgz.part" | sha512sum -c --quiet - || { say "caddy: not the pinned SHA-512"; exit 1; }
+mv "$OUT/dl/caddy.tgz.part" "$OUT/dl/caddy.tgz"
+tar -xzf "$OUT/dl/caddy.tgz" -C "$OUT/bin" caddy
+rm -f "$OUT/bin/tailscale" "$OUT/bin/tailscaled"
 curl -sSfL --max-time 300 -o "$OUT/dl/esbuild.tgz" "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-$ESBUILD_VERSION.tgz"
 got=$(openssl dgst -sha512 -binary "$OUT/dl/esbuild.tgz" | base64 -w0)
 [ "sha512-$got" = "sha512-$ESBUILD_SHA512" ] || { say "esbuild: not the pinned SHA-512"; exit 1; }
@@ -104,7 +108,7 @@ tar -xzf "$OUT/dl/esbuild.tgz" -C "$OUT/bin" --strip-components=2 package/bin/es
 
 fragment_sha=$(cat "$fragment/.source-sha" 2>/dev/null || git -C "$fragment" rev-parse HEAD)
 sandcastle_sha=$(git -C "$sandcastle" rev-parse HEAD 2>/dev/null || echo unknown)
-python3 -I - "$OUT" "$CELLD_SHA" "$MACROFICHE_SHA" "$fragment_sha" "$sandcastle_sha" "$OPENBAO_VERSION" "$TAILSCALE_VERSION" "$ESBUILD_VERSION" > "$OUT/build.json" <<'PY'
+python3 -I - "$OUT" "$CELLD_SHA" "$MACROFICHE_SHA" "$fragment_sha" "$sandcastle_sha" "$OPENBAO_VERSION" "$CADDY_VERSION" "$ESBUILD_VERSION" > "$OUT/build.json" <<'PY'
 import hashlib, json, os, sys
 out, celld, macrofiche, fragment, sandcastle, bao, ts, esb = sys.argv[1:9]
 def sha(p):
@@ -114,6 +118,6 @@ for name in sorted(os.listdir(os.path.join(out, "bin"))):
     files["bin/" + name] = sha(os.path.join(out, "bin", name))
 for name in ("Image", "guest.initrd", "nitro-home"):
     files[name] = sha(os.path.join(out, name))
-print(json.dumps({"pins": {"celld": celld, "macrofiche": macrofiche, "fragment": fragment, "sandcastle": sandcastle, "openbao": bao, "tailscale": ts, "esbuild": esb, "git": "2.55.0 (macrofiche's xtask engine)"}, "kernel": json.load(open(os.path.join(out, "kernel.json"))), "sha256": files}, indent=1))
+print(json.dumps({"pins": {"celld": celld, "macrofiche": macrofiche, "fragment": fragment, "sandcastle": sandcastle, "openbao": bao, "caddy": ts, "esbuild": esb, "git": "2.55.0 (macrofiche's xtask engine)"}, "kernel": json.load(open(os.path.join(out, "kernel.json"))), "sha256": files}, indent=1))
 PY
 say "done: $OUT/build.json"

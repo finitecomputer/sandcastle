@@ -109,6 +109,10 @@ pub struct Conf {
     /// Connections to these sockets on the parent reach the guest's port.
     #[serde(default)]
     pub to_guest: Vec<Relay>,
+    /// TCP ports the parent forwards untouched to the home from its own
+    /// addresses (443: the front door, which ends TLS in the home).
+    #[serde(default)]
+    pub inbound_tcp: Vec<u16>,
     /// The parent half of the container engine's bridge (sandcastle's
     /// `sandcastle-bridge parent --vsock <uds>`), run for the home's life:
     /// started once the vsock directory is ready, before the guest boots,
@@ -345,7 +349,7 @@ pub fn up(c: &Conf) -> Result<Option<i32>, Failure> {
             let _ = child.wait();
         }
     };
-    if let Err(e) = crate::net::up(&c.tap, &c.host_addr) {
+    if let Err(e) = crate::net::up(&c.tap, &c.host_addr, &c.inbound_tcp) {
         stop_bridge(&mut bridge);
         return Err(e);
     }
@@ -370,7 +374,7 @@ pub fn up(c: &Conf) -> Result<Option<i32>, Failure> {
     let g = match launched {
         Ok(g) => g,
         Err(e) => {
-            crate::net::down(&c.tap);
+            crate::net::down(&c.tap, &c.inbound_tcp);
             stop_bridge(&mut bridge);
             return Err(e);
         }
@@ -411,7 +415,7 @@ pub fn up(c: &Conf) -> Result<Option<i32>, Failure> {
     };
     let signed: Vec<_> = signed.lock().expect("never poisoned").iter().map(|r| serde_json::json!({"target": r.target, "signed": r.signed})).collect();
     let stop_ms = g.stop()?;
-    crate::net::down(&c.tap);
+    crate::net::down(&c.tap, &c.inbound_tcp);
     stop_bridge(&mut bridge);
     println!("{}", serde_json::json!({"home": "down", "sandbox_stop_ms": stop_ms, "what_the_parent_signed": signed}));
     Ok(code)

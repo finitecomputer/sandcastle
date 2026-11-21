@@ -4,7 +4,7 @@
 # (home-build.sh). Flattened by `docker export` and made a dm-verity disk
 # (home-image.sh), so PCR0 names every byte of it.
 #
-#   nginx        the front door: TLS ends here, in the home
+#   (Caddy, the front door, is a program of home-build.sh's)
 #   dmsetup      the data disk's encryption (dm-crypt, its key from KMS)
 #   e2fsprogs    the data disk's filesystem, made on the first boot
 #   socat        a debugging relay over vsock
@@ -12,7 +12,7 @@
 ARG BASE
 FROM ${BASE}
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates nginx dmsetup e2fsprogs socat curl procps iproute2 zlib1g libexpat1 libpcre2-8-0 && \
+    apt-get install -y --no-install-recommends ca-certificates dmsetup e2fsprogs socat curl procps iproute2 zlib1g libexpat1 libpcre2-8-0 && \
     rm -rf /var/lib/apt/lists/* /etc/nginx/sites-enabled/* && \
     mkdir -p /var/lib/fragment-home /run/fragment-home
 COPY bin/ /usr/local/bin/

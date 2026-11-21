@@ -14,14 +14,17 @@
 #      and a filesystem.
 #   5. OpenBao in memory, seeded from the bundle: the node's secrets
 #      backend, its token for celld minted fresh, its root token revoked.
-#   6. macrofiche, the identity door, tailscaled, nginx.
+#   6. macrofiche, the identity door (people's own passkeys), and the
+#      front door's certificate check.
 #   7. celld: the release deployed to the fleet bucket when it changed,
-#      then the node, on loopback behind nginx.
+#      then the node, on loopback.
+#   8. Caddy, the front door on 443 (which the parent forwards untouched):
+#      TLS ended here, with certificates it gets itself by TLS-ALPN-01.
 #
 # Settings, none secret, from the launcher's conf: HOME_BUCKET (s3://…),
-# HOME_REGION, HOME_TS_HOSTNAME, HOME_ENGINE (none, or bridge: the
-# parent's container engine through sandcastle-bridge), HOME_TAILNET (on,
-# or off for a home nothing outside reaches: a test's).
+# HOME_REGION, HOME_PLATFORM (the platform's host), HOME_SUFFIX (the
+# fragments'), HOME_ENGINE (none, or bridge: the parent's container
+# engine through sandcastle-bridge).
 #
 # Any service that exits takes the home down (the parent's service starts
 # it again); SIGTERM stops it gracefully: celld first (its last data
@@ -34,7 +37,7 @@ die() { say "failed: $*"; exit 1; }
 R=/opt/fragment-home/release
 S=/run/fragment-home/secrets
 STATE=/var/lib/fragment-home
-: "${HOME_BUCKET:?}" "${HOME_REGION:?}" "${HOME_TS_HOSTNAME:?}"
+: "${HOME_BUCKET:?}" "${HOME_REGION:?}" "${HOME_PLATFORM:?}" "${HOME_SUFFIX:?}"
 HOME_ENGINE=${HOME_ENGINE:-none}
 umask 077
 
@@ -44,13 +47,12 @@ t0=$(date +%s%N)
 # celld holds a file per resident cell: room for many fragments
 ulimit -n 65536
 # Nothing secret is written to the root: its upper layer is the plain
-# scratch disk on the parent. Secrets, temporary files and nginx's
-# buffered bodies go to tmpfs; the home's state to its encrypted disk.
+# scratch disk on the parent. Secrets and temporary files go to tmpfs; the
+# home's state (its certificates among it) to its encrypted disk.
 mkdir -p /run/fragment-home /var/lib/fragment-home
 mountpoint -q /run/fragment-home || mount -t tmpfs -o mode=0700,size=64m tmpfs /run/fragment-home
 mountpoint -q /tmp || mount -t tmpfs -o mode=1777,size=1g tmpfs /tmp
-mkdir -p /run/nginx && mount -t tmpfs -o mode=0700,uid="$(id -u www-data)",gid="$(id -g www-data)",size=256m tmpfs /run/nginx
-mkdir -p /run/fragment-home/celld /run/tailscale
+mkdir -p /run/fragment-home/celld
 
 # 2. what the parent can check this home is: its document, for its PCR0
 nonce=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
@@ -88,7 +90,7 @@ if ! dumpe2fs -h /dev/mapper/home > /dev/null 2>&1; then
     mkfs.ext4 -q -E lazy_itable_init=1,lazy_journal_init=1 -L home /dev/mapper/home
 fi
 mount -o noatime /dev/mapper/home $STATE
-mkdir -p $STATE/celld $STATE/macrofiche $STATE/tailscale $STATE/log
+mkdir -p $STATE/celld $STATE/macrofiche $STATE/door $STATE/caddy $STATE/log
 LOG=$STATE/log
 say "disk mounted (new=$new)"
 
@@ -128,21 +130,7 @@ say "openbao seeded ($(ls "$S"/store | wc -l) secrets)"
 pids+=($!)
 /usr/local/bin/fragment-identity-door --config $R/door.json 2> $LOG/door.log &
 pids+=($!)
-if [ "${HOME_TAILNET:-off}" = on ]; then
-/usr/local/bin/tailscaled --state=$STATE/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock --tun=tailscale0 --no-logs-no-support > $LOG/tailscaled.log 2>&1 &
-pids+=($!)
-for _ in $(seq 100); do [ -S /run/tailscale/tailscaled.sock ] && break; sleep 0.1; done
-ts() { /usr/local/bin/tailscale --socket=/run/tailscale/tailscaled.sock "$@"; }
-if ! ts ip -4 > /dev/null 2>&1; then
-    [ -f "$S/tailscale/authkey" ] || die "this home has no tailnet state and no auth key"
-    ts up --auth-key="file:$S/tailscale/authkey" --hostname="$HOME_TS_HOSTNAME" --accept-dns=true --netfilter-mode=off --timeout=60s > /dev/null
-fi
-for _ in $(seq 300); do ts ip -4 > /dev/null 2>&1 && break; sleep 0.1; done
-say "tailnet up ($(ts ip -4 | head -n1))"
-else
-    say "tailnet off (HOME_TAILNET=off: reachable from inside alone)"
-fi
-/usr/sbin/nginx -c $R/nginx.conf -g 'daemon off;' &
+/usr/local/bin/nitro-home-guest ask --listen 127.0.0.1:8805 --platform "$HOME_PLATFORM" --suffix "$HOME_SUFFIX" --cell 127.0.0.1:8080 2> $LOG/ask.log &
 pids+=($!)
 
 # the parent's container engine (sandcastle's, its Nitro backend), over
@@ -183,7 +171,17 @@ celld_pid=$!
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 for _ in $(seq 600); do curl -sf http://127.0.0.1:8080/.well-known/celld/health > /dev/null && break; sleep 0.05; done
 curl -sf http://127.0.0.1:8080/.well-known/celld/health > /dev/null || die "celld never answered its health"
-say "serving in $(ms_since "$t0") ms from the clock"
+say "celld serving in $(ms_since "$t0") ms from the clock"
+
+# 8. the front door, last: what it lets in is ready behind it
+XDG_DATA_HOME=$STATE/caddy XDG_CONFIG_HOME=$STATE/caddy /usr/local/bin/caddy run --config $R/Caddyfile --adapter caddyfile > $LOG/caddy.out 2>&1 &
+pids+=($!)
+for _ in $(seq 600); do curl -s -o /dev/null --resolve "$HOME_PLATFORM:443:127.0.0.1" "https://$HOME_PLATFORM/" && break; sleep 0.1; done
+if curl -sf -o /dev/null --resolve "$HOME_PLATFORM:443:127.0.0.1" "https://$HOME_PLATFORM/"; then
+    say "serving in $(ms_since "$t0") ms from the clock (TLS here, its certificate valid)"
+else
+    say "the front door has no valid certificate yet (see its log); serving behind it"
+fi
 
 # a service that exits takes the home down
 set +e
