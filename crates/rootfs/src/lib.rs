@@ -5,8 +5,10 @@
 
 pub mod digest;
 pub mod ext4;
+pub mod initrd;
 pub mod manifest;
 pub mod reference;
+pub mod verity;
 pub mod registry;
 
 pub use digest::Digest;

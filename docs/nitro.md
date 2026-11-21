@@ -119,3 +119,53 @@ VM either way:
   Firecracker installs its own filter on its threads; the runner's own
   threads (lifecycle, relays, forwarder) run unfiltered in the jail. An
   allowlist for them, installed after Firecracker starts, is not done.
+
+## The engine
+
+A node is krun's or Nitro's by its config: `nitro` (`{}` takes every
+default) names Firecracker and the kernel in `lib_dir`, the launch's mode
+(confidential unless set) and `cpu_overcommit`. The API is unchanged:
+celld's `CELLD_CONTAINER_ENGINE=krun:<socket>` reaches it as it reaches a
+krun node.
+
+- **At open** it needs `/dev/nitro_enclaves` in a group of its own (not
+  root's) instead of `/dev/kvm`, and makes the guest's initrd from its
+  `guest` binary instead of the boot disk.
+- **Images** are built in a build VM as on krun, the build VM a Nitro
+  Sandbox in direct mode (the layers are no secret, and untrusted layers
+  are never unpacked on the host). Then the host formats the root's
+  dm-verity tree (`veritysetup format`, `sandcastle_rootfs::verity`) and
+  keeps its table in the image's record. An image built before the node
+  ran Nitro is built again at its next load; a start on one is refused,
+  typed.
+- **A start** boots the image's measured root: its hash tree first, its
+  table on the kernel's line, a vsock CID of the slot's own (3 plus the
+  slot), no balloon (a sandbox's memory is the pool's until it stops).
+  Memory under 256 MiB or odd is refused before anything is reserved.
+- **Snapshots** freeze the guest's filesystems through its agent and copy
+  the scratch disk, as on krun. The parent can read that copy: the
+  scratch disk is not sealed here.
+- **Capacity:** `memory_mib_max` is the operator's, sized to the pool
+  less each sandbox's overheads (2 MiB and 16 MiB a device in confidential
+  mode; the spike's line 10).
+
+## Evidence
+
+`docs/nitro-evidence/` holds one real run on a parent (an m8g.xlarge,
+Amazon Linux 2023, kernel 6.18): celld's engine conformance suite
+(`celld dev` with `CELLD_CONTAINER_ENGINE=krun:<engine.sock>`) against
+this engine in Nitro mode, every sandbox confidential.
+
+- `conformance-nitro.json`: 25 passed, 0 failed, 0 unsupported: start,
+  ports, exec (output, stdin, PTY and resize, kill, abort), signals,
+  HTTP and HTTPS intercepts (HTTPS needs the guest's NSM clock), snapshot
+  and start from a snapshot.
+- `engine-log.txt`: the engine's own lines for that run: the image's
+  build VM applying its five layers and ending, then each sandbox's start
+  (ready in about 500 ms) and end.
+
+The run found three bugs, each fixed in the PR that owns it: the guest
+rebooted where Nitro's Firecracker ends only on a power-off (the guest),
+Firecracker's vsock dropped a host's close so a build's guest waited on
+a closed connection (the runner), and a build whose client went away
+left its build VM running and the build lock held (the engine).

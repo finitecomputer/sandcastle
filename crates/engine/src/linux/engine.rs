@@ -64,6 +64,27 @@ pub struct ImageMeta {
     pub compressed_bytes: u64,
     pub layers: usize,
     pub build_ms: u64,
+    /// On a Nitro node: the root's dm-verity tree and table, which a
+    /// sandbox's measured kernel line names (docs/nitro.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verity: Option<MeasuredRoot>,
+}
+
+/// An image's root as a Nitro Sandbox boots it: its hash tree's file and
+/// the table the kernel's line carries.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MeasuredRoot {
+    pub hashes: PathBuf,
+    pub table: sandcastle_vm::config::Verity,
+    pub format_ms: u64,
+}
+
+/// A Nitro node's boot files: the guest's initrd, made from its binary,
+/// and an empty disk for a build's first place (docs/nitro.md).
+struct NitroBoot {
+    initrd: PathBuf,
+    empty: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,6 +189,7 @@ pub struct Engine {
     ca: Arc<Ca>,
     node_addrs: Vec<IpAddr>,
     boot_disk: PathBuf,
+    nitro: Option<NitroBoot>,
     inner: Mutex<Inner>,
     builds: tokio::sync::Mutex<()>,
     sockets: super::ports::NetnsSockets,
@@ -210,6 +232,17 @@ fn random16() -> std::io::Result<[u8; 16]> {
         return Err(std::io::Error::other("getrandom"));
     }
     Ok(b)
+}
+
+/// The group of `/dev/nitro_enclaves`, which `nitro/parent-ready.sh`
+/// gives the device (root's own is refused: VM uids never get root's group).
+fn nitro_gid() -> Result<u32, ApiError> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(sandcastle_vm::jail::NITRO_DEVICE).map_err(|e| ApiError::Internal(format!("{}: {e} (launch the parent with enclaves on)", sandcastle_vm::jail::NITRO_DEVICE)))?;
+    if m.gid() == 0 || m.mode() & 0o060 != 0o060 {
+        return Err(ApiError::Internal(format!("{} is not in a group of its own with read and write (run nitro/parent-ready.sh)", sandcastle_vm::jail::NITRO_DEVICE)));
+    }
+    Ok(m.gid())
 }
 
 fn kvm_gid() -> Option<u32> {
@@ -256,14 +289,23 @@ impl Engine {
             }
         };
         let (system_libs, system_files) = c.system_mounts().map_err(|e| ApiError::Internal(e.to_string()))?;
+        // A Nitro parent has no /dev/kvm: its VMs open the Nitro device.
+        let nitro_gid = match &c.nitro {
+            Some(_) => Some(nitro_gid()?),
+            None => None,
+        };
+        let kvm_gid = match nitro_gid {
+            Some(g) => g,
+            None => kvm_gid().ok_or_else(|| ApiError::Internal("no kvm group".into()))?,
+        };
         let settings = sandcastle_vm::jail::Settings {
             state_root: c.state_dir.clone(),
             lib_dir: c.lib_dir.clone(),
             runner: c.runner.clone(),
             uid_base: c.uid_base,
             uid_count: c.vms_max,
-            kvm_gid: kvm_gid().ok_or_else(|| ApiError::Internal("no kvm group".into()))?,
-            nitro_gid: None,
+            kvm_gid,
+            nitro_gid,
             owner_uid: c.client_uid,
             owner_gid: c.client_gid,
             system_libs,
@@ -276,7 +318,27 @@ impl Engine {
         let guest = std::fs::read(&c.guest).map_err(internal("reading the guest"))?;
         let sha = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&guest));
         let boot_disk = c.boot().join(format!("boot-{}.ext4", &sha[..12]));
-        if !boot_disk.exists() {
+        // A Nitro node's guest is in its measured initrd, not on a disk.
+        let nitro = match &c.nitro {
+            None => None,
+            Some(n) => {
+                for f in [&n.firecracker, &n.kernel] {
+                    if !c.lib_dir.join(f).is_file() {
+                        return Err(ApiError::Internal(format!("{}: no such file (nitro/parent-ready.sh, nitro/guest-kernel.sh)", c.lib_dir.join(f).display())));
+                    }
+                }
+                let initrd = c.boot().join(format!("guest-{}.initrd", &sha[..12]));
+                if !initrd.exists() {
+                    write_atomic(&initrd, &sandcastle_rootfs::initrd::guest(&guest)).map_err(internal("the guest's initrd"))?;
+                }
+                let empty = c.boot().join("empty.disk");
+                if !empty.exists() {
+                    write_atomic(&empty, &[0u8; 4096]).map_err(internal("a build's empty disk"))?;
+                }
+                Some(NitroBoot { initrd, empty })
+            }
+        };
+        if nitro.is_none() && !boot_disk.exists() {
             let part = c.boot().join("boot.part");
             let _ = std::fs::remove_file(&part);
             sandcastle_rootfs::ext4::boot_disk(&c.guest, &part, &c.tmp().join("bootdir")).map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -290,6 +352,7 @@ impl Engine {
             ca: Arc::new(ca),
             node_addrs,
             boot_disk,
+            nitro,
             builds: tokio::sync::Mutex::new(()),
             sockets: super::ports::NetnsSockets::start().map_err(internal("the sockets thread"))?,
         };
@@ -587,8 +650,9 @@ impl Engine {
             .or_else(|| saved.repo_tags.as_ref().and_then(|t| t.first().cloned()))
             .unwrap_or_else(|| digest.clone());
         let mut meta = match self.image_by_digest(&digest) {
-            Ok(m) => m,
-            Err(_) => self.build(&reference, &digest, config, &layers, &blobs).await?,
+            // A Nitro node needs the root measured, which a krun build is not.
+            Ok(m) if self.nitro.is_none() || m.verity.is_some() => m,
+            _ => self.build(&reference, &digest, config, &layers, &blobs).await?,
         };
         // An image built before under another name answers to this one too.
         meta.reference = reference.clone();
@@ -630,28 +694,53 @@ impl Engine {
                 libkrun: self.config.lib_dir.join("libkrun.so"),
                 libkrunfw: self.config.lib_dir.join("libkrunfw.so.5"),
                 run_dir: run_dir.clone(),
-                disks: vec![Disk { role: DiskRole::Boot, path: self.boot_disk.clone() }, Disk { role: DiskRole::Target, path: target.clone() }],
+                disks: vec![
+                    match &self.nitro {
+                        // A Nitro build boots its guest from the initrd; its
+                        // first disk only keeps the target at vdb. Direct
+                        // mode: the layers are no secret, and it is faster.
+                        Some(b) => Disk { role: DiskRole::Hashes, path: b.empty.clone() },
+                        None => Disk { role: DiskRole::Boot, path: self.boot_disk.clone() },
+                    },
+                    Disk { role: DiskRole::Target, path: target.clone() },
+                ],
                 net: Net::None,
                 balloon: false,
                 kernel_args: vec![],
                 seccomp: None,
-                nitro: None,
+                nitro: self.nitro_vm(slot, false, None),
                 start: Start::Build,
             };
             let mut l = self.launch(slot, &vm_config, &cg).await?;
             wait_event(&mut l, "ready").await?;
-            let (dir2, layers2, blobs2) = (run_dir.clone(), layers.to_vec(), blobs.to_vec());
+            // A build's steps are lines in the engine's log: a node's
+            // operator sees which one a slow or stuck build is at.
+            eprintln!("sandcastle-engine: {name}: ready; {} layer(s) to apply", layers.len());
+            let (dir2, layers2, blobs2, name2) = (run_dir.clone(), layers.to_vec(), blobs.to_vec(), name.clone());
             let streamed = tokio::task::spawn_blocking(move || -> Result<u64, String> {
                 let c = AgentClient::new(&dir2);
-                for (l, p) in layers2.iter().zip(&blobs2) {
+                for (i, (l, p)) in layers2.iter().zip(&blobs2).enumerate() {
                     let f = std::fs::File::open(p).map_err(|e| e.to_string())?;
+                    let t = Instant::now();
                     c.layer(&l.media_type, &l.digest.to_string(), l.size, f).map_err(|e| format!("layer {}: {e}", l.digest))?;
+                    eprintln!("sandcastle-engine: {name2}: layer {} of {} ({} bytes) applied in {} ms", i + 1, layers2.len(), l.size, t.elapsed().as_millis());
                 }
                 c.finish().map_err(|e| e.to_string())
             })
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
+            // A stream that failed leaves the build's guest waiting for more:
+            // end its VM, or this waits on it forever (holding every later
+            // load behind the build lock).
+            if streamed.is_err() {
+                let dir = run_dir.clone();
+                let _ = tokio::task::spawn_blocking(move || AgentClient::new(&dir).control(&ControlRequest::Kill)).await;
+            }
+            if let Err(e) = &streamed {
+                eprintln!("sandcastle-engine: {name}: streaming failed: {e}");
+            }
             let status = l.child.wait().await.map_err(internal("waiting for a build"))?;
+            eprintln!("sandcastle-engine: {name}: the build VM ended {status}");
             streamed.map_err(|e| ApiError::Internal(format!("{reference}: {e}")))?;
             if !status.success() {
                 return Err(ApiError::Internal(runner_said(&l, &format!("{reference}: the build VM ended {status}"))));
@@ -664,6 +753,26 @@ impl Engine {
         let root = dir.join("root.ext4");
         std::fs::rename(&target, &root).map_err(internal("publishing an image"))?;
         mode(&root, 0o444).map_err(internal("an image's mode"))?;
+        // A Nitro node's image is a measured root: its hash tree beside it,
+        // its table in the image's record.
+        let verity = match &self.nitro {
+            None => None,
+            Some(_) => {
+                let tf = Instant::now();
+                let (r, h) = (root.clone(), dir.join("root.verity"));
+                let table = tokio::task::spawn_blocking(move || sandcastle_rootfs::verity::format(&r, &h))
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .map_err(|e| ApiError::Internal(format!("{reference}: {e}")))?;
+                let hashes = dir.join("root.verity");
+                mode(&hashes, 0o444).map_err(internal("an image's hash tree's mode"))?;
+                Some(MeasuredRoot {
+                    hashes,
+                    table: sandcastle_vm::config::Verity { data_blocks: table.data_blocks, hash_start_block: table.hash_start_block, root_hash: table.root_hash, salt: table.salt },
+                    format_ms: tf.elapsed().as_millis() as u64,
+                })
+            }
+        };
         let meta = ImageMeta {
             reference: reference.into(),
             digest: digest.into(),
@@ -672,12 +781,28 @@ impl Engine {
             compressed_bytes: compressed,
             layers: layers.len(),
             build_ms: t.elapsed().as_millis() as u64,
+            verity,
         };
         write_atomic(&dir.join("image.json"), &serde_json::to_vec_pretty(&meta).expect("serializes")).map_err(internal("image.json"))?;
         Ok(meta)
     }
 
     // ---- slots, run directories, launching ----
+
+    /// The Nitro section of a VM's config on a Nitro node: its files, its
+    /// mode, a CID of its slot's own, and a run's measured root.
+    fn nitro_vm(&self, slot: u32, confidential: bool, verity: Option<sandcastle_vm::config::Verity>) -> Option<sandcastle_vm::config::Nitro> {
+        let (n, boot) = (self.config.nitro.as_ref()?, self.nitro.as_ref()?);
+        Some(sandcastle_vm::config::Nitro {
+            firecracker: self.config.lib_dir.join(&n.firecracker),
+            kernel: self.config.lib_dir.join(&n.kernel),
+            initrd: boot.initrd.clone(),
+            confidential,
+            cpu_overcommit: n.cpu_overcommit,
+            guest_cid: sandcastle_vm::firecracker::GUEST_CID_MIN + slot,
+            verity,
+        })
+    }
 
     fn reserve(&self, name: &str, res: &Resources) -> Result<u32, ApiError> {
         let mut i = self.inner.lock().expect("never poisoned");
@@ -765,8 +890,16 @@ impl Engine {
             }
             _ => unreachable!("validate refuses both and neither"),
         };
+        if self.nitro.is_some() && (res.memory_mib < sandcastle_vm::config::NITRO_MEMORY_MIB_MIN || !res.memory_mib.is_multiple_of(2)) {
+            return Err(ApiError::Invalid(format!("a Nitro Sandbox's memory is at least {} MiB, in steps of 2", sandcastle_vm::config::NITRO_MEMORY_MIB_MIN)));
+        }
+        let measured = match (&self.nitro, &image.verity) {
+            (None, _) => None,
+            (Some(_), Some(m)) => Some(m.clone()),
+            (Some(_), None) => return Err(ApiError::Invalid(format!("{}: built before this node ran Nitro Sandboxes; load it again", image.reference))),
+        };
         let slot = self.reserve(name, &res)?;
-        match self.start_in(t0, slot, name, req, res, image, snapshot).await {
+        match self.start_in(t0, slot, name, req, res, image, snapshot, measured).await {
             Ok(vm) => {
                 if wait_ready {
                     let mut ready = vm.ready.subscribe();
@@ -836,6 +969,7 @@ impl Engine {
         res: Resources,
         image: ImageMeta,
         snapshot: Option<SnapshotRecord>,
+        measured: Option<MeasuredRoot>,
     ) -> Result<Arc<Vm>, ApiError> {
         let run_dir = self.fresh_run_dir(slot)?;
         let cg = self.cgroups.make(slot, &res).map_err(internal("a VM's cgroup"))?;
@@ -848,7 +982,10 @@ impl Engine {
             None => self.scratch(&run_dir, res.disk_mb)?,
         };
         let mut disks = vec![
-            Disk { role: DiskRole::Boot, path: self.boot_disk.clone() },
+            match &measured {
+                Some(m) => Disk { role: DiskRole::Hashes, path: m.hashes.clone() },
+                None => Disk { role: DiskRole::Boot, path: self.boot_disk.clone() },
+            },
             Disk { role: DiskRole::Image, path: image.root.clone() },
             Disk { role: DiskRole::Scratch, path: scratch },
         ];
@@ -896,10 +1033,10 @@ impl Engine {
             run_dir: run_dir.clone(),
             disks,
             net: Net::Tap { name: "tap0".into(), mac: [0x02, 0x53, 0x43, (slot >> 16) as u8, (slot >> 8) as u8, slot as u8] },
-            balloon: true,
+            balloon: self.nitro.is_none(),
             kernel_args: self.config.kernel_args.clone(),
             seccomp: None,
-            nitro: None,
+            nitro: self.nitro_vm(slot, self.config.nitro.as_ref().is_some_and(|n| n.confidential), measured.map(|m| m.table)),
             start: Start::Run {
                 entrypoint,
                 hostname: hostname_of(name),
