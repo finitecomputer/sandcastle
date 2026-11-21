@@ -91,11 +91,30 @@ pub fn connect_agent(vsock: &Path) -> std::io::Result<UnixStream> {
     Ok(s)
 }
 
-/// Copies one way until EOF, then closes the other side's write half, so
-/// each direction ends on its own as a socketpair would.
+/// Copies one way until EOF, then does to the other side what this side's
+/// peer did: a half-close (it stopped writing, it still reads) becomes a
+/// half-close, a close a close. Firecracker's vsock does not pass a host's
+/// half-close on to the guest, so a peer that closed and got only a
+/// half-close would leave the guest's end open, and the guest's agent
+/// (which serves a build one connection at a time) waiting on it.
 fn pump(mut from: UnixStream, to: UnixStream) {
-    let _ = std::io::copy(&mut from, &mut &to);
-    let _ = to.shutdown(std::net::Shutdown::Write);
+    let copied = std::io::copy(&mut from, &mut &to);
+    if copied.is_err() || peer_closed(&from) {
+        let _ = to.shutdown(std::net::Shutdown::Both);
+        let _ = from.shutdown(std::net::Shutdown::Both);
+    } else {
+        let _ = to.shutdown(std::net::Shutdown::Write);
+    }
+}
+
+/// Whether `s`'s peer closed its socket, not only shut its writing: a unix
+/// socket reads POLLHUP then, and POLLRDHUP alone after a half-close.
+fn peer_closed(s: &UnixStream) -> bool {
+    use std::os::fd::AsRawFd;
+    let mut p = libc::pollfd { fd: s.as_raw_fd(), events: libc::POLLRDHUP, revents: 0 };
+    // SAFETY: poll(2) on one valid pollfd, without waiting.
+    let n = unsafe { libc::poll(&mut p, 1, 0) };
+    n == 1 && p.revents & (libc::POLLHUP | libc::POLLERR) != 0
 }
 
 /// Serves the agent socket for the VM's life: each connection a relay of
@@ -145,6 +164,48 @@ mod tests {
         assert_eq!(json["vsock"]["uds_path"], "/vm/v.sock");
         assert_eq!(json["vsock"]["guest_cid"], 10);
         assert_eq!(json["enclave"]["direct_mode"], false);
+    }
+
+    // Goal: the relay ends as its peers do. A host that closes gets the
+    // guest's side closed (the bug: a build's guest waited on a connection
+    // the engine had closed); a host that only half-closes still hears the
+    // guest's answer. Method: the pump between two socketpairs, each way.
+    #[test]
+    fn the_relay_closes_as_its_peer_did() {
+        for half in [false, true] {
+            let (host_client, host_relay) = UnixStream::pair().unwrap();
+            let (guest_relay, mut guest_agent) = UnixStream::pair().unwrap();
+            let (h2, g2) = (host_relay.try_clone().unwrap(), guest_relay.try_clone().unwrap());
+            let back = std::thread::spawn(move || pump(g2, h2));
+            let forth = std::thread::spawn(move || pump(host_relay, guest_relay));
+            let mut client = host_client;
+            client.write_all(b"request").unwrap();
+            if half {
+                client.shutdown(std::net::Shutdown::Write).unwrap();
+                let mut got = Vec::new();
+                guest_agent.read_to_end(&mut got).unwrap();
+                assert_eq!(got, b"request", "the guest reads the request, then EOF");
+                // The guest still answers a host that only stopped writing.
+                guest_agent.write_all(b"answer").unwrap();
+                drop(guest_agent);
+                let mut answer = String::new();
+                client.read_to_string(&mut answer).unwrap();
+                assert_eq!(answer, "answer");
+            } else {
+                drop(client);
+                let mut got = Vec::new();
+                guest_agent.read_to_end(&mut got).unwrap();
+                assert_eq!(got, b"request", "the guest reads the request, then EOF");
+                forth.join().unwrap();
+                back.join().unwrap();
+                // Both pumps ended without the guest closing: its end is
+                // closed, and a write to it fails.
+                assert!(guest_agent.write_all(&[0u8; 1 << 16]).and_then(|_| guest_agent.write_all(&[0u8; 1 << 16])).is_err());
+                continue;
+            }
+            forth.join().unwrap();
+            back.join().unwrap();
+        }
     }
 
     // Goal: the relay hands a stream through only after Firecracker's OK,
