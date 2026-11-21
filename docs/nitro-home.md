@@ -44,11 +44,23 @@ only the home holds the bucket's credentials.
 The parent's launcher (`nitro-home up`, a systemd service) boots the
 sandbox with:
 
-- sandcastle's guest as init;
-- the home's root under dm-verity, with its root hash and the home's KMS
-  key id on the measured command line;
-- a fresh scratch disk for the overlay;
-- the home's data disk.
+- sandcastle's guest as init (lane A's node line, `nitro/home-no-door`),
+  with a static `mke2fs` beside it in the initrd;
+- the home's root under dm-verity, with its root hash, the home's KMS key
+  id and two more words on the measured command line:
+  `sandcastle.agent=none` (the guest takes no exec and no session; its
+  host may only ping it and signal its entrypoint) and
+  `sandcastle.start=image` (the guest runs `/etc/sandcastle/start.json`
+  from the measured root, and ignores the entrypoint and environment the
+  start message names);
+- a fresh, bare scratch disk for the overlay, which the guest seals under
+  a key of its own and formats inside;
+- the home's data disk, which the guest leaves raw for the workload.
+
+The image carries its own start (`start.json`: `entry.sh` and its
+settings), its sealed bundle, and its computers' pins. So what the home
+runs, with what, is a function of its PCR0, and a key released only to
+that PCR0 is released only to it.
 
 The workload (`host/entry.sh`) then:
 
@@ -65,8 +77,16 @@ The workload (`host/entry.sh`) then:
 7. starts Caddy last, once what it lets in is ready behind it.
 
 Any service that exits takes the home down, and the systemd service
-starts it again. A stop is graceful: celld goes first, so its last writes
-reach the bucket, then the rest, and the disk is closed last.
+starts it again. A stop is graceful: the launcher signals `entry.sh`
+(SIGTERM, the one thing besides a ping the guest takes from its host);
+celld goes first, asked to keep its computers running for the next start,
+so its last writes reach the bucket; then the rest, and the disk is closed
+last.
+
+Nothing runs a command in the home, its operator included: its logs are
+its only voice. Invites come only through its door (`passkeys.inviter`:
+a hosted platform's signed ask; fragment#1449), and a new computer image's
+pin is a new home image.
 
 ## Secrets
 
@@ -93,8 +113,10 @@ The bundle holds:
   bucket alone, so the parent's role cannot reach it.
 
 `cargo xtask home render` (fragment, `nitro/home-release`) writes what the
-image carries and what the bundle seals, apart. Nothing in the image is
-secret.
+image carries and what the bundle seals, apart. The image carries the
+bundle too, sealed (`/opt/fragment-home/sealed.json`): the guest runs the
+image's own start and takes no environment from the parent. Nothing in
+the image is secret in the clear.
 
 ## The release rule
 
@@ -181,6 +203,12 @@ the home's CID), and celld reaches the engine as it reaches the krun engine
 (`HOME_ENGINE=none`), fragments and apps work, and a computer is refused,
 typed.
 
+Each computer is reached over its attested session alone (lane A's PR 6),
+and its egress runs through the home (PR 8: port 5003, the home's CA). The
+home's bridge claims a computer at its start against the PCR0s pinned in
+the home's image (`/opt/fragment-home/pins`): a start of any other image
+is refused, and counts as a failed start.
+
 ## Phase 1's acceptance
 
 | # | What | Result |
@@ -237,14 +265,14 @@ Each item is with the design PR that closes it
 
 | # | What | Closed by |
 |---|---|---|
-| 1 | **It can run any command in the home** (sandcastle's guest agent takes exec over vsock), and it picks the workload's entrypoint and environment, which PCR0 does not measure. Either way it can have the measured image fetch the home's secrets and hand them out. This is the largest hole: everything below matters only once it is closed | PR 6, the attested control channel. The entrypoint also has to come from the measured command line, with no exec except on that channel |
+| 1 | ~~It can run any command in the home, and picks its entrypoint and environment~~ | **Closed** 2026-11-21 on the shared parent (lane A's #27 guest): `sandcastle.agent=none` on the measured line, so the parent's exec is refused ("this guest takes that only over its attested session, or not at all"); `sandcastle.start=image`, so the home runs its measured root's `start.json`, its sealed bundle and pins in that root too. The parent keeps a ping, a signal to the entrypoint (its stop), and kill |
 | 2 | **Whoever ships a new home image can ship one that skips the passkey check**, or anything else: the project's administrators can name any PCR0 in the key's policy (`kms:Put*`), and AWS can too | PR 10, a release rule we cannot change alone |
 | 3 | **It can roll back or swap the home's data disk** (an older copy, or another home's under the same key). It cannot read it: AES-XTS under a key from KMS. The encryption is not authenticated, so it can also corrupt blocks | PR 9 (rollback), with dm-integrity |
 | 4 | **The fleet bucket is unsealed.** The parent's role has no access, and the home's traffic to S3 is TLS the home ends. But whoever holds AWS administration, or the home's IAM key, reads every object, and can roll the bucket back | The sealed fleet bucket (phase 2) |
 | 5 | ~~It could get a certificate for the home's names~~ (TLS-ALPN-01 validates whoever answers on the address the DNS names, and the parent holds that address) | **Closed** 2026-11-21: CAA records name the home's own ACME account (`accounturi`, RFC 8657), whose key never leaves the home, and forbid wildcards. Another account was refused ("Certificates and CAA") |
 | 6 | It sees traffic metadata: clients' addresses, the names they ask for (SNI, so the fragments' names), sizes and timing, and the names the home resolves | Inherent to the parent carrying the bytes; DNS over TLS would hide the last |
 | 7 | It sees the home's log lines: the boot's steps, celld's warnings, the attestation document. The door's, macrofiche's and celld's full logs stay on the encrypted disk | Keep the parent's view to the boot's steps |
-| 8 | It sees phase 1's invite link (`fragment-identity-door invite`, run over its own exec), and could use it first | Invites made and handed over on the attested channel (PR 6), to the owner alone |
+| 8 | ~~It sees an invite link made over its own exec~~ | **Closed** with item 1: no exec. Invites come through the door alone (a hosted platform's signed ask, over TLS the home ends), and their links go from the home to that platform to the person's browser |
 | 9 | It can stop, kill, refuse, delay or throttle the home: availability, never content | Inherent |
 | 10 | The scratch disk (the overlay's upper layer) is plain on the parent. The home writes nothing secret there (the canary above), but a future change could | PR 7, the scratch disk sealed |
 

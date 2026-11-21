@@ -25,6 +25,17 @@ pub use message::*;
 pub const PORT_LIFECYCLE: u32 = 1025;
 /// The guest listens here; each host connection is one request.
 pub const PORT_AGENT: u32 = 1024;
+/// The kernel-line word of a guest with no door at all (a home's): the
+/// host's agent port takes only ping and a signal, and there is no
+/// session port. Measured, as `SESSION_ARG` is.
+pub const AGENT_NONE_ARG: &str = "sandcastle.agent=none";
+/// The kernel-line word by which a guest runs the entrypoint its image's
+/// measured root names (`START_FILE`), not the one the host's start message
+/// names: what a home runs is then a function of its PCR0.
+pub const START_IMAGE_ARG: &str = "sandcastle.start=image";
+/// The image's own start, a `Process` in JSON, read from the image's
+/// read-only layer (dm-verity's), never from the writable one.
+pub const START_FILE: &str = "/etc/sandcastle/start.json";
 /// The guest's view of the host on vsock (`VMADDR_CID_HOST`).
 pub const CID_HOST: u32 = 2;
 /// The guest's own address on vsock.

@@ -45,7 +45,9 @@ before = cond["kms:RecipientAttestation:PCR0"]
 before = before if isinstance(before, list) else [before]
 assert set(pcr0) <= set("0123456789abcdef") and len(pcr0) == 96, "a SHA-384 PCR0"
 assert pcr0 != "0" * 96, "debug mode's PCR0 is never released to"
-kept = [p for p in before if p != pcr0][-1:]
+# the one pinned now (the running image's, first in the list) stays, for
+# a rollback; any older one goes
+kept = [p for p in before if p != pcr0][:1]
 cond["kms:RecipientAttestation:PCR0"] = [pcr0] + kept
 json.dump(d, open(path, "w"), indent=1)
 PY

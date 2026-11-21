@@ -2,7 +2,8 @@
 # The home's measured root (docs/nitro-home.md, "The image"), on the
 # parent, as root:
 #
-#   sudo ./home-image.sh <home-build out> <release dir> <out prefix>
+#   sudo ./home-image.sh <home-build out> <release dir> <out prefix> \
+#        <sealed bundle> <launcher conf> <pins>
 #
 # The root is Debian's slim base, pinned by digest, the packages of the
 # Dockerfile beside this script, home-build.sh's programs, and the release
@@ -19,6 +20,12 @@ set -euo pipefail
 build=$(realpath "$1")
 release=$(realpath "$2")
 out=$3
+# the home's own start (the conf's entrypoint and env, as start.json), its
+# sealed secrets and its computers' pins: the guest takes no start or exec
+# from the parent (`sandcastle.start=image`), so they are the image's
+sealed=$(realpath "$4")
+conf=$(realpath "$5")
+pins=$(realpath "$6")
 here=$(dirname "$(realpath "$0")")
 spike=$(realpath "$here/../../nitro-spike/host")
 # debian:trixie-slim for arm64, pinned by its digest at the first build
@@ -43,6 +50,15 @@ cp -a "$build/bin" "$ctx/bin"
 cp -a "$build/git" "$ctx/git"
 cp -a "$release" "$ctx/release"
 cp "$here/entry.sh" "$here/Dockerfile" "$ctx/"
+cp "$sealed" "$ctx/sealed.json"
+cp "$pins" "$ctx/pins"
+python3 -I - "$conf" > "$ctx/start.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+env = ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"] + c.get("env", [])
+assert c["entrypoint"] and all("=" in e for e in env)
+print(json.dumps({"argv": c["entrypoint"], "env": env, "cwd": "/", "user": None}))
+PY
 docker build -q --platform linux/arm64 --build-arg "BASE=$base" -t nitro-home-root "$ctx" > /dev/null
 cid=$(docker create --platform linux/arm64 nitro-home-root)
 docker export "$cid" | tar -x -C "$root" --numeric-owner
