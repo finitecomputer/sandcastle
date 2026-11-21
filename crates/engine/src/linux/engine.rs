@@ -263,6 +263,7 @@ impl Engine {
             uid_base: c.uid_base,
             uid_count: c.vms_max,
             kvm_gid: kvm_gid().ok_or_else(|| ApiError::Internal("no kvm group".into()))?,
+            nitro_gid: None,
             owner_uid: c.client_uid,
             owner_gid: c.client_gid,
             system_libs,
@@ -634,6 +635,7 @@ impl Engine {
                 balloon: false,
                 kernel_args: vec![],
                 seccomp: None,
+                nitro: None,
                 start: Start::Build,
             };
             let mut l = self.launch(slot, &vm_config, &cg).await?;
@@ -897,6 +899,7 @@ impl Engine {
             balloon: true,
             kernel_args: self.config.kernel_args.clone(),
             seccomp: None,
+            nitro: None,
             start: Start::Run {
                 entrypoint,
                 hostname: hostname_of(name),

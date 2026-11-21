@@ -30,15 +30,86 @@ pub enum DiskRole {
     Scratch,
     Data,
     Target,
+    /// A Nitro Sandbox's first disk in place of the boot disk: the
+    /// image's dm-verity hash tree (docs/nitro.md).
+    Hashes,
 }
 
 impl DiskRole {
     /// Shared disks are never writable: a guest that could write one would
     /// reach every VM that boots from it.
     pub fn read_only(self) -> bool {
-        matches!(self, DiskRole::Boot | DiskRole::Image)
+        matches!(self, DiskRole::Boot | DiskRole::Image | DiskRole::Hashes)
     }
 }
+
+/// The verity device the kernel makes from its command line, which names
+/// the image's root hash, so the measured command line decides the root.
+pub const VERITY_NAME: &str = "sc-image";
+/// The kernel's line ahead of the root's: Firecracker's own default,
+/// spelled out because it is measured, and `quiet`, because the parent
+/// shows the console's boot log even outside debug mode (the spike's
+/// line 2: 730 ms of serial log).
+pub const NITRO_BOOT_ARGS: &str = "panic=1 initcall_blacklist=i8042_init quiet";
+
+/// A disk image's dm-verity metadata, as `veritysetup format` wrote it
+/// with 4 KiB blocks and SHA-256.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Verity {
+    pub data_blocks: u64,
+    /// Where the tree starts on its disk, in blocks: 1 after veritysetup's
+    /// superblock.
+    pub hash_start_block: u64,
+    pub root_hash: String,
+    pub salt: String,
+}
+
+impl Verity {
+    fn validate(&self) -> Result<(), ConfigError> {
+        let hex = |s: &str, max: usize| !s.is_empty() && s.len() <= max && s.len().is_multiple_of(2) && s.bytes().all(|b| b.is_ascii_hexdigit());
+        if self.data_blocks == 0 || self.data_blocks > (16u64 << 30) / 4096 || self.hash_start_block > 1 || self.root_hash.len() != 64 || !hex(&self.root_hash, 64) || !hex(&self.salt, 256) {
+            return Err(ConfigError::Nitro("the verity table"));
+        }
+        Ok(())
+    }
+
+    /// `dm-mod.create`'s value: the image on `/dev/vdb`, its tree on
+    /// `/dev/vda`, read-only.
+    pub fn table(&self) -> String {
+        format!(
+            "{VERITY_NAME},,,ro,0 {} verity 1 {} {} 4096 4096 {} {} sha256 {} {}",
+            self.data_blocks * 8,
+            sandcastle_wire::disks::IMAGE,
+            sandcastle_wire::disks::HASHES,
+            self.data_blocks,
+            self.hash_start_block,
+            self.root_hash,
+            self.salt
+        )
+    }
+}
+
+/// A Nitro Sandbox in place of libkrun (docs/nitro.md): Firecracker, the
+/// measured kernel and initrd the guest boots from, and the image's
+/// verity table. libkrun's two paths stay in the config, unopened.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Nitro {
+    pub firecracker: PathBuf,
+    pub kernel: PathBuf,
+    pub initrd: PathBuf,
+    /// The parent cannot read its memory (and an NSM attests), or it can.
+    pub confidential: bool,
+    /// vCPUs shared rather than each a hardware thread of the CPU pool
+    /// (measured into PCR0).
+    pub cpu_overcommit: bool,
+    /// Unique on the parent while the sandbox runs.
+    pub guest_cid: u32,
+    /// The image's verity table: a run's measured root. A build has none.
+    pub verity: Option<Verity>,
+}
+
+/// A Nitro Sandbox's memory: at least 256 MiB, in steps of 2.
+pub const NITRO_MEMORY_MIB_MIN: u32 = crate::firecracker::MEMORY_MIB_MIN;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct Disk {
@@ -68,7 +139,7 @@ pub struct VmConfig {
     pub disks: Vec<Disk>,
     pub net: Net,
     /// virtio-balloon with free-page reporting: freed guest memory goes
-    /// back to the host.
+    /// back to the host (libkrun only: a Nitro Sandbox has none).
     pub balloon: bool,
     /// Kernel parameters beyond the runner's own, `key=value` with plain
     /// characters only (a tuning, never a root or an init).
@@ -79,6 +150,9 @@ pub struct VmConfig {
     #[serde(default)]
     pub seccomp: Option<crate::jail::SeccompMode>,
     pub start: Start,
+    /// A Nitro Sandbox instead of libkrun.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nitro: Option<Nitro>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -101,6 +175,8 @@ pub enum ConfigError {
     Start(String),
     #[error("kernel_args: at most {KERNEL_ARGS_MAX}, each key=value of plain characters, none naming the root or init")]
     KernelArg,
+    #[error("nitro: {0}")]
+    Nitro(&'static str),
 }
 
 /// An absolute path with no `.` or `..`, so what is checked is what is
@@ -142,15 +218,28 @@ impl VmConfig {
             }
         }
         let roles: Vec<DiskRole> = self.disks.iter().map(|d| d.role).collect();
+        // A Nitro Sandbox's first disk is its image's hash tree: its guest
+        // comes from the initrd, not a boot disk.
+        let first = if self.nitro.is_some() { DiskRole::Hashes } else { DiskRole::Boot };
         match &self.start {
             Start::Run { data, .. } => {
                 let want: &[DiskRole] = if *data {
-                    &[DiskRole::Boot, DiskRole::Image, DiskRole::Scratch, DiskRole::Data]
+                    &[first, DiskRole::Image, DiskRole::Scratch, DiskRole::Data]
                 } else {
-                    &[DiskRole::Boot, DiskRole::Image, DiskRole::Scratch]
+                    &[first, DiskRole::Image, DiskRole::Scratch]
                 };
                 if roles != want {
-                    return Err(ConfigError::Disks("run takes boot, image, scratch, and data if asked, in that order"));
+                    return Err(ConfigError::Disks("run takes boot (a Nitro Sandbox: hashes), image, scratch, and data if asked, in that order"));
+                }
+            }
+            // A Nitro build's first disk is an empty one in the boot
+            // disk's place: the guest is the initrd's, the target vdb.
+            Start::Build if self.nitro.is_some() => {
+                if roles != [DiskRole::Hashes, DiskRole::Target] {
+                    return Err(ConfigError::Disks("a Nitro build takes an empty first disk and the target, in that order"));
+                }
+                if self.net != Net::None {
+                    return Err(ConfigError::Net("a build has no network"));
                 }
             }
             Start::Build => {
@@ -189,7 +278,53 @@ impl VmConfig {
             }
         }
         self.start.validate().map_err(|e| ConfigError::Start(e.to_string()))?;
+        if let Some(n) = &self.nitro {
+            for p in [&n.firecracker, &n.kernel, &n.initrd] {
+                if !normal_absolute(p) {
+                    return Err(ConfigError::Path("nitro"));
+                }
+            }
+            if self.memory_mib < NITRO_MEMORY_MIB_MIN || !self.memory_mib.is_multiple_of(crate::firecracker::MEMORY_MIB_STEP) {
+                return Err(ConfigError::Nitro("memory: at least 256 MiB, in steps of 2"));
+            }
+            if n.guest_cid < crate::firecracker::GUEST_CID_MIN {
+                return Err(ConfigError::Nitro("guest_cid"));
+            }
+            if self.run_dir.join(crate::paths::NITRO_LIFECYCLE_SOCK).as_os_str().len() > SOCKET_PATH_BYTES_MAX {
+                return Err(ConfigError::SocketPath);
+            }
+            match (&self.start, &n.verity) {
+                (Start::Run { .. }, Some(v)) => v.validate()?,
+                (Start::Run { .. }, None) => return Err(ConfigError::Nitro("a run boots a measured root: its verity table")),
+                (Start::Build, None) => {}
+                (Start::Build, Some(_)) => return Err(ConfigError::Nitro("a build has no root yet")),
+            }
+        }
         Ok(())
+    }
+
+    /// A Nitro Sandbox's whole kernel command line, which PCR0 and PCR1
+    /// measure: the boot arguments, the image's verity device and the guest
+    /// told to mount it (a run's; a build has no root), then the node's own
+    /// tunings.
+    pub fn nitro_cmdline(&self) -> Option<String> {
+        let n = self.nitro.as_ref()?;
+        let mut c = NITRO_BOOT_ARGS.to_string();
+        if let Some(v) = &n.verity {
+            c.push_str(&format!(
+                " dm-mod.create=\"{}\" dm-mod.waitfor={},{} {}{}",
+                v.table(),
+                sandcastle_wire::disks::HASHES,
+                sandcastle_wire::disks::IMAGE,
+                sandcastle_wire::disks::IMAGE_ARG,
+                sandcastle_wire::disks::VERITY_DEVICE
+            ));
+        }
+        for a in &self.kernel_args {
+            c.push(' ');
+            c.push_str(a);
+        }
+        Some(c)
     }
 
     /// What the runner appends to libkrun's kernel command line: the boot
@@ -246,7 +381,94 @@ pub(crate) mod tests {
                 ca_pem: None,
                 net: None,
             },
+            nitro: None,
         }
+    }
+
+    /// A Nitro Sandbox's config as the jail hands it to the runner.
+    pub fn nitro_config() -> VmConfig {
+        let mut c = run_config();
+        c.run_dir = "/vm".into();
+        c.disks = vec![
+            Disk { role: DiskRole::Hashes, path: "/disks/hashes.verity".into() },
+            Disk { role: DiskRole::Image, path: "/disks/image.ext4".into() },
+            Disk { role: DiskRole::Scratch, path: "/disks/scratch.ext4".into() },
+        ];
+        c.net = Net::Tap { name: "tap0".into(), mac: [0x02, 0x53, 0x43, 0, 0, 7] };
+        if let Start::Run { net, .. } = &mut c.start {
+            *net = Some(sandcastle_wire::GuestNet { address: "10.0.2.15/24".into(), gateway: "10.0.2.2".into(), dns: "10.0.2.2".into(), mtu: 1500 });
+        }
+        c.nitro = Some(Nitro {
+            firecracker: "/nitro/firecracker".into(),
+            kernel: "/nitro/kernel".into(),
+            initrd: "/nitro/initrd".into(),
+            confidential: true,
+            cpu_overcommit: false,
+            guest_cid: 10,
+            verity: Some(Verity { data_blocks: 923_392, hash_start_block: 1, root_hash: "e1".repeat(32), salt: "6e17".repeat(16) }),
+        });
+        c
+    }
+
+    // Goal: a Nitro config is checked as strictly as libkrun's: its hash
+    // tree first (no boot disk), no build, its memory in Firecracker's
+    // steps, a CID past the reserved ones, a well-formed verity table.
+    // Method: the good config, then each way to break it.
+    #[test]
+    fn a_nitro_config_is_checked() {
+        nitro_config().validate().unwrap();
+        type Breaks = Vec<(&'static str, Box<dyn Fn(&mut VmConfig)>)>;
+        let broken: Breaks = vec![
+            ("a boot disk", Box::new(|c| c.disks[0].role = DiskRole::Boot)),
+            ("memory under 256", Box::new(|c| c.memory_mib = 254)),
+            ("odd memory", Box::new(|c| c.memory_mib = 513)),
+            ("a reserved CID", Box::new(|c| c.nitro.as_mut().unwrap().guest_cid = 2)),
+            ("a short root hash", Box::new(|c| c.nitro.as_mut().unwrap().verity.as_mut().unwrap().root_hash = "e1".into())),
+            ("a root hash that is not hex", Box::new(|c| c.nitro.as_mut().unwrap().verity.as_mut().unwrap().root_hash = "zz".repeat(32))),
+            ("no data blocks", Box::new(|c| c.nitro.as_mut().unwrap().verity.as_mut().unwrap().data_blocks = 0)),
+            ("a run with no root", Box::new(|c| c.nitro.as_mut().unwrap().verity = None)),
+            ("a relative kernel", Box::new(|c| c.nitro.as_mut().unwrap().kernel = "kernel".into())),
+            ("a build with a root", Box::new(|c| {
+                c.start = Start::Build;
+                c.disks = vec![Disk { role: DiskRole::Hashes, path: "/a".into() }, Disk { role: DiskRole::Target, path: "/b".into() }];
+                c.net = Net::None;
+            })),
+        ];
+        for (what, f) in broken {
+            let mut c = nitro_config();
+            f(&mut c);
+            assert!(c.validate().is_err(), "{what}");
+        }
+        // A build: an empty first disk, the target, no root, no network.
+        let mut b = nitro_config();
+        b.start = Start::Build;
+        b.disks = vec![Disk { role: DiskRole::Hashes, path: "/a".into() }, Disk { role: DiskRole::Target, path: "/b".into() }];
+        b.net = Net::None;
+        b.nitro.as_mut().unwrap().verity = None;
+        b.validate().unwrap();
+        assert_eq!(b.nitro_cmdline().unwrap(), NITRO_BOOT_ARGS);
+        // The hash tree is shared, so it is never writable.
+        assert!(DiskRole::Hashes.read_only());
+    }
+
+    // Goal: the kernel's line names the image's root exactly: its table
+    // over /dev/vdb with the tree on /dev/vda, the guest told to mount the
+    // verity device, the node's tunings last. libkrun's config has none.
+    #[test]
+    fn a_nitro_kernel_line() {
+        let mut c = nitro_config();
+        c.kernel_args = vec!["loglevel=4".into()];
+        let line = c.nitro_cmdline().unwrap();
+        let v = c.nitro.as_ref().unwrap().verity.as_ref().unwrap();
+        assert_eq!(
+            line,
+            format!(
+                "panic=1 initcall_blacklist=i8042_init quiet dm-mod.create=\"sc-image,,,ro,0 7387136 verity 1 /dev/vdb /dev/vda 4096 4096 923392 1 sha256 {} {}\" dm-mod.waitfor=/dev/vda,/dev/vdb sandcastle.image=/dev/dm-0 loglevel=4",
+                v.root_hash, v.salt
+            )
+        );
+        assert_eq!(run_config().nitro_cmdline(), None);
+        assert_eq!(format!("{}_{}", crate::paths::NITRO_VSOCK, sandcastle_wire::PORT_LIFECYCLE), crate::paths::NITRO_LIFECYCLE_SOCK);
     }
 
     #[test]

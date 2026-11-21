@@ -4,6 +4,7 @@ pub mod forward;
 pub mod jail;
 pub mod krun;
 pub mod net;
+pub mod nitro;
 pub mod probe;
 pub mod runner;
 pub mod seccomp;

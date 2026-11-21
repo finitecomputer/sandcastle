@@ -78,3 +78,44 @@ launch's flags. A node builds an image's root in a build VM, as krun
 nodes do, which is not byte-reproducible: two nodes' builds of one image
 give two root hashes, each measured. Publishing one PCR0 per image needs a
 deterministic build of the root; that is not done here.
+
+## The runner
+
+`sandcastle-vm` boots a Nitro Sandbox when its config carries a `nitro`
+section: Firecracker v1.18 as the runner's child, inside the same jail,
+in place of libkrun in the runner's own thread. Everything else the runner
+does for libkrun it does unchanged, so the engine and its clients see one
+VM either way:
+
+- **The jail** binds Firecracker and the kernel from the node's lib dir,
+  the initrd from the lib dir or the engine's state (the engine makes it),
+  and `/dev/nitro_enclaves` in place of `/dev/kvm`, which a Nitro parent
+  has none of. The VM's uid joins the device's group (`nitro_gid`); a node
+  with none runs no Nitro Sandbox. libkrun's files are never bound then.
+- **The disks** keep their order, so the guest's `wire::disks` hold: the
+  first is the image's dm-verity hash tree (`DiskRole::Hashes`, read-only
+  and shared) where libkrun has the boot disk, then the image, the scratch
+  disk and the data disk.
+- **The kernel's line** (`VmConfig::nitro_cmdline`) is spelled out whole,
+  because PCR0 and PCR1 measure it: Firecracker's default, `quiet`, the
+  verity table over the image with its root hash, the guest told to mount
+  that device, then the node's tunings. A build has no root and no table.
+- **Firecracker's config** (`firecracker.rs`, the spike's, which described
+  its launches to the MiB) is written from the VM's: every DMB size in
+  confidential mode, every enclave flag written, no drive the root device,
+  the tap with the guest's MAC (the jail makes it a permanent neighbor).
+- **The guest's channels:** Firecracker's vsock is a unix socket in the
+  run directory. The guest's dial to the host's port 1025 reaches
+  `v.sock_1025`, where the runner serves the lifecycle as it does for
+  libkrun. `agent.sock`, which the engine's agent client opens, is a relay:
+  each connection becomes `CONNECT 1024` on Firecracker's vsock, its `OK`
+  read a byte at a time (what follows is the agent's), then a plain
+  stream.
+- **Control:** a Nitro Sandbox has no pause, so pause and resume answer an
+  error; kill ends the runner, its PID namespace's first process, and
+  Firecracker with it. The runner ends when Firecracker does, with its
+  status.
+- **Seccomp:** the runner installs libkrun's allowlist only for libkrun.
+  Firecracker installs its own filter on its threads; the runner's own
+  threads (lifecycle, relays, forwarder) run unfiltered in the jail. An
+  allowlist for them, installed after Firecracker starts, is not done.
