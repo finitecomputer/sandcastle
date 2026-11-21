@@ -44,6 +44,39 @@ pub struct EngineConfig {
     /// default; Arch's is `/usr/lib`.
     #[serde(default = "debian_libs")]
     pub system_libs: Vec<PathBuf>,
+    /// A Nitro parent's computers: each a confidential Nitro Sandbox in
+    /// place of a libkrun VM (docs/nitro.md). Absent, the node is krun's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nitro: Option<NitroConfig>,
+}
+
+/// A Nitro node's own settings: its two files in `lib_dir`, and how its
+/// sandboxes launch (both measured into PCR0).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct NitroConfig {
+    /// Firecracker v1.18 or later (`nitro/parent-ready.sh` installs it).
+    #[serde(default = "firecracker")]
+    pub firecracker: String,
+    /// The guest kernel (`nitro/guest-kernel.sh`).
+    #[serde(default = "nitro_kernel")]
+    pub kernel: String,
+    /// The parent cannot read a computer's memory. Direct mode is for
+    /// tests only, and an image's build always uses it (no secret yet).
+    #[serde(default = "yes")]
+    pub confidential: bool,
+    /// vCPUs shared rather than each a hardware thread of the CPU pool:
+    /// without it, a node runs a computer per two of its pool's vCPUs.
+    #[serde(default)]
+    pub cpu_overcommit: bool,
+}
+
+fn firecracker() -> String {
+    "firecracker".into()
+}
+
+fn nitro_kernel() -> String {
+    "nitro-kernel".into()
 }
 
 /// Debian's: the multiarch directory, and the interpreter where it lies
@@ -92,6 +125,13 @@ impl EngineConfig {
         }
         if self.memory_mib_max == 0 {
             return Err(ConfigError("memory_mib_max: above 0".into()));
+        }
+        if let Some(n) = &self.nitro {
+            for (name, f) in [("nitro.firecracker", &n.firecracker), ("nitro.kernel", &n.kernel)] {
+                if f.is_empty() || f.contains('/') || f == "." || f == ".." {
+                    return Err(ConfigError(format!("{name}: a file name in lib_dir")));
+                }
+            }
         }
         // The socket path's room: `vms/<slot>/lifecycle.sock` must fit.
         let probe = self.state_dir.join(format!("vms/{}/lifecycle.sock", self.vms_max));
@@ -177,6 +217,7 @@ pub(crate) mod tests {
             pull: true,
             seccomp: sandcastle_vm::jail::SeccompMode::Enforce,
             system_libs: debian_libs(),
+            nitro: None,
         }
     }
 
@@ -192,6 +233,14 @@ pub(crate) mod tests {
         assert!(bad(&|c| c.state_dir = "/".into()));
         assert!(bad(&|c| c.vms_max = 0));
         assert!(bad(&|c| c.uid_base = 1000));
+        assert!(bad(&|c| c.nitro = Some(NitroConfig { firecracker: "../firecracker".into(), kernel: "k".into(), confidential: true, cpu_overcommit: false })));
+        assert!(bad(&|c| c.nitro = Some(NitroConfig { firecracker: "firecracker".into(), kernel: "".into(), confidential: true, cpu_overcommit: false })));
+        // A krun node's config has no section; a Nitro node's empty one is
+        // the defaults.
+        let krun: EngineConfig = serde_json::from_str(&serde_json::to_string(&config()).unwrap()).unwrap();
+        assert_eq!(krun.nitro, None);
+        let n: NitroConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!((n.firecracker.as_str(), n.kernel.as_str(), n.confidential, n.cpu_overcommit), ("firecracker", "nitro-kernel", true, false));
         assert!(bad(&|c| c.client_uid = 300_001));
         assert!(bad(&|c| c.client_uid = 0));
         assert!(bad(&|c| c.state_dir = format!("/{}", "a".repeat(100)).into()));
