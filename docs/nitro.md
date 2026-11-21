@@ -25,6 +25,8 @@ The stack, each a draft PR on `node`:
 7. **The attested session** (`nitro/attested-session`): a home verifies
    each computer and drives it over a session the parent cannot read or
    use; the parent keeps start, stop and kill.
+8. **A guest with no door** (`nitro/home-no-door`): a home's own sandbox
+   takes no exec at all and runs only what its measured root names.
 
 ## The guest
 
@@ -246,6 +248,27 @@ the parent carries and can neither read nor use (`crates/session`):
   image's root itself (not byte-reproducible), so a pin is the node's, and
   that first reading trusts the node (above, "Release assets").
 
+## A guest with no door
+
+A home is a sandbox too, and its guest is sandcastle's. Two kernel-line
+words, both measured into PCR0, take the parent's last hands off it:
+
+- **`sandcastle.agent=none`**: the agent's host port takes only ping and a
+  signal to the entrypoint (the parent keeps stop and kill), and there is
+  no session port. Nothing runs a command in that guest, the parent
+  included. Its logs are its only voice.
+- **`sandcastle.start=image`**: the guest runs `/etc/sandcastle/start.json`
+  (a process: argv, env, cwd, user) read from the image's read-only layer,
+  which dm-verity checks, and ignores the entrypoint the parent's start
+  message names. What the sandbox runs is then a function of its PCR0, so
+  a key released only to that PCR0 (KMS's) is released only to it. An
+  image with no such file refuses its boot.
+
+Together they make a production home image: no exec door, its start its
+own. A debug image is another one, with another PCR0, so it can never get
+the production home's keys. A word for a session and one for no door at
+all refuse the boot together.
+
 ## What the parent can still see and do
 
 A confidential sandbox keeps its memory from the parent. Everything that
@@ -312,6 +335,9 @@ this engine in Nitro mode, every sandbox confidential.
   build VM applying its five layers and ending, then each sandbox's start
   (ready in about 500 ms) and end.
 
+- `no-door.md`: a guest with no door: the image's own start run in place
+  of the parent's, the parent's exec refused, an image without a start
+  refused its boot.
 - `session.md`: the attested session: an exec over it answered, the
   parent's own exec and claim refused, the suite through a home.
 - `sealed-scratch.md`: the sealed scratch disk: a planted string found

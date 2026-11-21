@@ -142,6 +142,7 @@ fn run(
     }
     let cmdline = std::fs::read_to_string("/proc/cmdline").map_err(io("reading the kernel's command line"))?;
     let image = mounts::image_device(&cmdline).map_err(|e| InitError::Refused(e.to_string()))?;
+    let doors = mounts::Doors::of(&cmdline).map_err(|e| InitError::Refused(e.to_string()))?;
     // A Nitro Sandbox (it has an NSM) seals its scratch disk under a key it
     // makes now and never shows (docs/nitro.md), and takes no data disk,
     // which would outlive that key in plain text on the host.
@@ -157,6 +158,10 @@ fn run(
     for m in mounts::run_root(&image, &scratch) {
         sys::mount(&m).map_err(io("mounting the root's layers"))?;
     }
+    // The image's own start, from its read-only (measured) layer, when the
+    // kernel line names it: the host's start message then names nothing run.
+    let image_start = if doors.start_from_image { std::fs::read(format!("{}{}", mounts::LOWER, sandcastle_wire::START_FILE)).ok() } else { None };
+    let entrypoint = mounts::entrypoint(&doors, entrypoint, image_start.as_deref()).map_err(InitError::Refused)?;
     sys::mkdir_p(mounts::UPPER).map_err(io("mkdir upper"))?;
     sys::mkdir_p(mounts::WORK).map_err(io("mkdir work"))?;
     sys::mount(&mounts::overlay()).map_err(io("mounting the overlay"))?;
@@ -186,7 +191,7 @@ fn run(
     // A guest whose measured kernel line requires the attested session
     // takes the agent's work only over it (docs/nitro.md); the word with no
     // NSM to attest by refuses the boot.
-    let session_required = cmdline.split_whitespace().any(|w| w == sandcastle_wire::SESSION_ARG);
+    let session_required = doors.session;
     let sessions = if session_required {
         if !sealed {
             return Err(InitError::Refused("the kernel line requires an attested session, and this guest has no NSM".into()));
@@ -207,7 +212,7 @@ fn run(
         let mut child = exec::spawn_entrypoint(&entrypoint).map_err(io("starting the entrypoint"))?;
         let pid = child.id().expect("a running child has a pid");
         let mnt = std::fs::File::open(format!("/proc/{pid}/ns/mnt")).map_err(io("the workload's mount namespace"))?;
-        let ctx = Arc::new(Ctx::new(OwnedFd::from(mnt), pid as libc::pid_t, session_required));
+        let ctx = Arc::new(Ctx::new(OwnedFd::from(mnt), pid as libc::pid_t, doors.host_restricted()));
         // SAFETY: `listener` is the vsock socket just bound, owned by the
         // AsyncFd until it drops, so the fd stays open and the same.
         let listener =

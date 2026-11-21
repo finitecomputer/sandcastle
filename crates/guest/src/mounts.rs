@@ -2,7 +2,7 @@
 //! workload's root (the image read-only under a fresh scratch disk's
 //! overlay, with `/data` on top), and the build target.
 
-use sandcastle_wire::disks;
+use sandcastle_wire::{disks, Process};
 
 /// Where the init keeps the workload's layers, on its own tmpfs.
 pub const RUN: &str = "/run/sc";
@@ -99,6 +99,52 @@ pub fn image_device(cmdline: &str) -> Result<String, &'static str> {
     }
 }
 
+/// A start file's ceiling: a command, its environment and a few paths.
+pub const START_FILE_BYTES_MAX: usize = 64 * 1024;
+
+/// What a guest's kernel line says of its doors and its start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Doors {
+    /// The agent's work only over the attested session.
+    pub session: bool,
+    /// No door: the host's port takes only ping and a signal; no session.
+    pub none: bool,
+    /// The image's own start, not the host's.
+    pub start_from_image: bool,
+}
+
+impl Doors {
+    pub fn of(cmdline: &str) -> Result<Doors, &'static str> {
+        let has = |w: &str| cmdline.split_whitespace().any(|x| x == w);
+        let d = Doors { session: has(sandcastle_wire::SESSION_ARG), none: has(sandcastle_wire::AGENT_NONE_ARG), start_from_image: has(sandcastle_wire::START_IMAGE_ARG) };
+        if d.session && d.none {
+            return Err("the kernel line asks for a session and for no door at all");
+        }
+        Ok(d)
+    }
+
+    /// Whether the host's own agent port takes only what the parent keeps.
+    pub fn host_restricted(&self) -> bool {
+        self.session || self.none
+    }
+}
+
+/// The entrypoint: the host's start message's, or, when the kernel line
+/// says so, the image's own start file (`image_start`, its bytes as read
+/// from the image's read-only layer, `None` when it has none).
+pub fn entrypoint(doors: &Doors, from_host: Process, image_start: Option<&[u8]>) -> Result<Process, String> {
+    if !doors.start_from_image {
+        return Ok(from_host);
+    }
+    let bytes = image_start.ok_or_else(|| format!("the kernel line names the image's start, and the image has no {}", sandcastle_wire::START_FILE))?;
+    if bytes.len() > START_FILE_BYTES_MAX {
+        return Err(format!("{} is past {START_FILE_BYTES_MAX} bytes", sandcastle_wire::START_FILE));
+    }
+    let p: Process = serde_json::from_slice(bytes).map_err(|e| format!("{}: {e}", sandcastle_wire::START_FILE))?;
+    p.validate().map_err(|e| format!("{}: {e}", sandcastle_wire::START_FILE))?;
+    Ok(p)
+}
+
 /// The workload's root: the image read-only, a fresh scratch disk as the
 /// overlay's upper layer, so every start begins from the image exactly.
 /// `scratch` is the scratch disk itself, or its sealed mapping
@@ -191,6 +237,39 @@ mod tests {
         }
         assert_eq!(run_root("/dev/dm-0", disks::SCRATCH)[0].source, "/dev/dm-0");
         assert!(run_root("/dev/dm-0", disks::SCRATCH)[0].flags.read_only);
+    }
+
+    // Goal: the kernel line's words are read exactly (a word, not a part
+    // of one), a session with no door at all is refused, and either one
+    // restricts the host's port.
+    #[test]
+    fn doors_from_the_kernel_line() {
+        let none = Doors::of("quiet sandcastle.agent=none sandcastle.start=image").unwrap();
+        assert!(none.none && none.start_from_image && !none.session && none.host_restricted());
+        let session = Doors::of("quiet sandcastle.session=required").unwrap();
+        assert!(session.session && session.host_restricted() && !session.start_from_image);
+        let open = Doors::of("quiet sandcastle.agent=nonex xsandcastle.start=image").unwrap();
+        assert!(!open.host_restricted() && !open.start_from_image);
+        assert!(Doors::of("sandcastle.session=required sandcastle.agent=none").is_err());
+    }
+
+    // Goal: with the image's start named, the host's entrypoint is never
+    // run: the image's file is, checked; an image without one, a file past
+    // its ceiling, or one that is not a process refuses the boot. Without
+    // the word, the host's runs as before.
+    #[test]
+    fn the_images_start_wins_when_the_line_says_so() {
+        let host = Process { argv: vec!["/bin/sh".into(), "-c".into(), "hand me the secrets".into()], ..Process::default() };
+        let image = br#"{"argv":["/usr/local/bin/home-entry"],"env":["MODE=production"]}"#;
+        let measured = Doors::of("sandcastle.agent=none sandcastle.start=image").unwrap();
+        let p = entrypoint(&measured, host.clone(), Some(image)).unwrap();
+        assert_eq!(p.argv, vec!["/usr/local/bin/home-entry"]);
+        assert_eq!(p.env, vec!["MODE=production"]);
+        assert!(entrypoint(&measured, host.clone(), None).unwrap_err().contains("no /etc/sandcastle/start.json"));
+        assert!(entrypoint(&measured, host.clone(), Some(&vec![b' '; START_FILE_BYTES_MAX + 1])).is_err());
+        assert!(entrypoint(&measured, host.clone(), Some(br#"{"argv":[]}"#)).is_err());
+        assert!(entrypoint(&measured, host.clone(), Some(b"not json")).is_err());
+        assert_eq!(entrypoint(&Doors::of("quiet").unwrap(), host.clone(), Some(image)).unwrap(), host);
     }
 
     #[test]
