@@ -70,6 +70,17 @@ pub fn main() -> ! {
         eprintln!("sandcastle-guest is a VM's init and runs as PID 1");
         std::process::exit(2);
     }
+    // Booted from an initrd (a Nitro Sandbox's, which has no root disk;
+    // docs/nitro.md),
+    // the init's root is the kernel's rootfs, where pivot_root (the
+    // workload's start) is refused. Once, before anything else, it moves
+    // onto a tmpfs of its own and runs again from there; booted from a
+    // disk (krun), there is no marker to look for and nothing changes.
+    if sys::booted_from_initrd() && !std::env::args().any(|a| a == sys::MOVED_ARG) {
+        let e = sys::leave_initrd_root();
+        eprintln!("sandcastle-guest: leaving the initrd's root: {e}");
+        sys::poweroff()
+    }
     let mut life = None;
     let e = match boot(&mut life) {
         Ok(never) => match never {},
@@ -93,6 +104,15 @@ fn boot(life_out: &mut Option<Lifecycle>) -> Result<std::convert::Infallible, In
     }
     let mut life = Lifecycle::connect()?;
     life.send(&Event::Hello { version: sandcastle_wire::VERSION, uptime_ms: sys::uptime_ms() })?;
+    // A Nitro Sandbox's guest boots at 1970: its clock comes from its NSM,
+    // before anything checks a certificate (docs/nitro.md). A guest with
+    // an NSM that cannot give the time fails here, where the runner hears
+    // why, rather than later as a TLS error inside the workload.
+    if std::path::Path::new(crate::nsm::DEVICE).exists() {
+        let doc = sys::nsm_document().map_err(io("asking the NSM for the time"))?;
+        let ms = crate::nsm::timestamp_ms(&doc).map_err(|e| InitError::Refused(format!("the NSM's time: {e}")))?;
+        sys::set_clock_ms(ms).map_err(io("setting the clock"))?;
+    }
     let start = life.read_start()?;
     start.validate().map_err(|e| InitError::Refused(e.to_string()))?;
     *life_out = Some(life);
@@ -117,7 +137,9 @@ fn run(
     for d in mounts::dirs_after_basics(false) {
         sys::mkdir_p(d).map_err(io("mkdir"))?;
     }
-    for m in mounts::run_root() {
+    let cmdline = std::fs::read_to_string("/proc/cmdline").map_err(io("reading the kernel's command line"))?;
+    let image = mounts::image_device(&cmdline).map_err(|e| InitError::Refused(e.to_string()))?;
+    for m in mounts::run_root(&image) {
         sys::mount(&m).map_err(io("mounting the root's layers"))?;
     }
     sys::mkdir_p(mounts::UPPER).map_err(io("mkdir upper"))?;

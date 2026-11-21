@@ -6,6 +6,7 @@
 pub mod env;
 pub mod layer;
 pub mod mounts;
+pub mod nsm;
 pub mod passwd;
 
 #[cfg(target_os = "linux")]

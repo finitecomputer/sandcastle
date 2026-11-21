@@ -45,4 +45,12 @@ pub mod disks {
     pub const DATA: &str = "/dev/vdd";
     /// Build: the empty ext4 the layers are unpacked into.
     pub const TARGET: &str = "/dev/vdb";
+    /// A Nitro Sandbox's first disk: its image's dm-verity hash tree
+    /// (docs/nitro.md), where krun has the boot disk.
+    pub const HASHES: &str = "/dev/vda";
+    /// The kernel command line's word naming the image's device in place
+    /// of `IMAGE`: the verity device the kernel made from the same line.
+    pub const IMAGE_ARG: &str = "sandcastle.image=";
+    /// That device on a Nitro Sandbox.
+    pub const VERITY_DEVICE: &str = "/dev/dm-0";
 }
