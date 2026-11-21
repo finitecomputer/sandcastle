@@ -70,6 +70,16 @@ pub fn main() -> ! {
         eprintln!("sandcastle-guest is a VM's init and runs as PID 1");
         std::process::exit(2);
     }
+    // Booted from an initrd (a Nitro Sandbox's, which has no root disk),
+    // the init's root is the kernel's rootfs, where pivot_root (the
+    // workload's start) is refused. Once, before anything else, it moves
+    // onto a tmpfs of its own and runs again from there; booted from a
+    // disk (krun), there is no marker to look for and nothing changes.
+    if sys::booted_from_initrd() && !std::env::args().any(|a| a == sys::MOVED_ARG) {
+        let e = sys::leave_initrd_root();
+        eprintln!("sandcastle-guest: leaving the initrd's root: {e}");
+        sys::poweroff()
+    }
     let mut life = None;
     let e = match boot(&mut life) {
         Ok(never) => match never {},
@@ -117,7 +127,9 @@ fn run(
     for d in mounts::dirs_after_basics(false) {
         sys::mkdir_p(d).map_err(io("mkdir"))?;
     }
-    for m in mounts::run_root() {
+    let cmdline = std::fs::read_to_string("/proc/cmdline").map_err(io("reading the kernel's command line"))?;
+    let image = mounts::image_device(&cmdline).map_err(|e| InitError::Refused(e.to_string()))?;
+    for m in mounts::run_root(&image) {
         sys::mount(&m).map_err(io("mounting the root's layers"))?;
     }
     sys::mkdir_p(mounts::UPPER).map_err(io("mkdir upper"))?;

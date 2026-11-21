@@ -1,0 +1,62 @@
+{
+  "canary_needle": "the canary's text itself, counted in every file of the store and in the scratch disk's image",
+  "disk": "hermes",
+  "fill_gb": 1,
+  "folder_object_ms": "23",
+  "folder_put_bytes_per_s": "90000000",
+  "lives": [
+    {
+      "canary_in_the_store": 15,
+      "canary_on_the_scratch_disk": 9,
+      "canary_read_back": true,
+      "fill_s": 2.297051456,
+      "fpac_events": [
+        "{\"disk\":\"hermes\",\"epoch\":1795220160708,\"extents_mapped\":0,\"fpac\":\"opened\",\"memory_locked\":true,\"ms\":2.268655,\"new\":true,\"pages\":0,\"replayed\":0,\"rounds\":[],\"sealed\":false,\"volume_bytes\":42949672960,\"writeback_set\":true}",
+        "{\"dir\":\"/opt/data\",\"fpac\":\"mounted\",\"misses\":0,\"ms\":16.442092,\"pack_waits\":0,\"waited_at\":[]}",
+        "{\"fpac\":\"exit\",\"ms\":33541.618902}"
+      ],
+      "hello_ms": 728.9002409999999,
+      "hermes_configured_s": 9.872171456,
+      "hermes_output": "⚠ install out of sync (pnpm: not installed or outdated) — this docker-managed install must rebuild the artifact to fix\nNITRO-SPIKE-STAND-IN-MODEL: hello from the instant stand-in model\n\nsession_id: local-8f22229b7ddc194ea619061775750dbf27cb0e981bda1e97ea7a9e1d0bbea748\n",
+      "hermes_replied": true,
+      "hermes_reply_at_ms": 29339.981794,
+      "hermes_reply_exec_ms": 13370.0,
+      "key": {
+        "plain": true
+      },
+      "key_ms": 757.043516,
+      "life": 0,
+      "mounted_ms": 786.1863559999999,
+      "ready_ms": 738.056041,
+      "settle_s": 3.014524524,
+      "sleep_ms": 4963.1
+    },
+    {
+      "canary_in_the_store": 18,
+      "canary_on_the_scratch_disk": 3,
+      "canary_read_back": true,
+      "fpac_events": [
+        "{\"disk\":\"hermes\",\"epoch\":1795220195807,\"extents_mapped\":16768,\"fpac\":\"opened\",\"memory_locked\":true,\"ms\":149.95576699999998,\"new\":false,\"pages\":29,\"replayed\":0,\"rounds\":[{\"asks\":29,\"failed\":0,\"ms\":118.39256300000001}],\"sealed\":false,\"volume_bytes\":42949672960,\"writeback_set\":true}",
+        "{\"dir\":\"/opt/data\",\"fpac\":\"mounted\",\"misses\":0,\"ms\":627.410079,\"pack_waits\":1,\"waited_at\":[121]}",
+        "{\"fpac\":\"exit\",\"ms\":17443.320819}"
+      ],
+      "hello_ms": 728.575559,
+      "hermes_output": "⚠ install out of sync (pnpm: not installed or outdated) — this docker-managed install must rebuild the artifact to fix\nNITRO-SPIKE-STAND-IN-MODEL: hello from the instant stand-in model\n\nsession_id: local-3df229eaeb68d5ff1b82d6a8fbe991af3d01b92e9ae88ceddbd1ca0b551a23cc\n",
+      "hermes_replied": true,
+      "hermes_reply_at_ms": 15533.129291,
+      "hermes_reply_exec_ms": 14092.6,
+      "key": {
+        "plain": true
+      },
+      "key_ms": 757.195638,
+      "life": 1,
+      "mounted_ms": 1440.542666,
+      "ready_ms": 737.9395410000001,
+      "sleep_ms": 2667.8
+    }
+  ],
+  "plain": true,
+  "scenario": "lives",
+  "store": "FPAC's folder remote on the parent (a STAND-IN for the platform's route and its store)",
+  "what_the_parent_signed": []
+}

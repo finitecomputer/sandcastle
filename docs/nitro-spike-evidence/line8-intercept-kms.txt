@@ -1,0 +1,1 @@
+sandcastle-nitro-spike: the entrypoint exited (Some(1), None) before "nitro: key": ["nitro: started", "nitro: time 1795219005054", "nitro-key: TLS to KMS: invalid peer certificate: UnknownIssuer"]

@@ -1,0 +1,49 @@
+{
+  "cpu_overcommit": true,
+  "cpu_pool": "7",
+  "drives_each": 4,
+  "launched": [
+    {
+      "expected_pool_mib": 6226,
+      "launch_ms": 809.770821,
+      "pool_free_bytes": "21116223488",
+      "pool_in_use_bytes": "6801063936",
+      "sandbox": 1,
+      "slots_in_use": "1"
+    },
+    {
+      "expected_pool_mib": 6226,
+      "launch_ms": 826.7601460000001,
+      "pool_free_bytes": "14587789312",
+      "pool_in_use_bytes": "13329498112",
+      "sandbox": 2,
+      "slots_in_use": "2"
+    },
+    {
+      "expected_pool_mib": 6226,
+      "launch_ms": 826.6463120000001,
+      "pool_free_bytes": "8059355136",
+      "pool_in_use_bytes": "19857932288",
+      "sandbox": 3,
+      "slots_in_use": "3"
+    },
+    {
+      "expected_pool_mib": 6226,
+      "launch_ms": 832.378599,
+      "pool_free_bytes": "1530920960",
+      "pool_in_use_bytes": "26386366464",
+      "sandbox": 4,
+      "slots_in_use": "4"
+    }
+  ],
+  "memory_mib": 6144,
+  "pool_in_use_before_bytes": "272629760",
+  "pool_total_bytes": "27917287424",
+  "refused": {
+    "error": "2026-11-21T00:35:44.138467868 [anonymous-instance:main] RunWithoutApiError error: Failed to build MicroVM from Json: Could not Start MicroVM from one single json: Enclave builder error: Enclave VM error: Failed to allocate CMA memory: Cannot create mmap region: Out of memory (os error 12)",
+    "sandbox": 5
+  },
+  "scenario": "density",
+  "slots": "20",
+  "vcpus_each": 2
+}

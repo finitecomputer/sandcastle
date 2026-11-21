@@ -1,0 +1,30 @@
+$ teardown.sh list   # 2026-11-21T00:40:44Z, before
+instance <id:dd3c8169>
+volume <id:f92d5af6>
+security-group <id:fafef0b0>
+key-pair <id:c8890419>
+kms-key <id:9da0be09>
+s3-bucket <id:d1eab3b1>
+iam-role <id:ea91eafe>
+iam-instance-profile <id:ea91eafe>
+
+$ teardown.sh delete s3-bucket
+instance <id:dd3c8169>
+volume <id:f92d5af6>
+security-group <id:fafef0b0>
+key-pair <id:c8890419>
+kms-key <id:9da0be09>
+s3-bucket <id:d1eab3b1>
+iam-role <id:ea91eafe>
+iam-instance-profile <id:ea91eafe>
+deleted-s3-bucket <id:d1eab3b1>
+teardown: done (s3-bucket); run 'list' again to see what is left
+
+$ teardown.sh list   # after
+instance <id:dd3c8169>
+volume <id:f92d5af6>
+security-group <id:fafef0b0>
+key-pair <id:c8890419>
+kms-key <id:9da0be09>
+iam-role <id:ea91eafe>
+iam-instance-profile <id:ea91eafe>

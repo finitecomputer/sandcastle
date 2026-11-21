@@ -1,0 +1,312 @@
+   Compiling sandcastle-nitro-spike v0.1.0 (/home/ec2-user/sandcastle/crates/nitro-spike)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.14s
+     Running unittests src/lib.rs (target/debug/deps/sandcastle_egress-5a9d5c7a3acaf6b6)
+
+running 19 tests
+test dns::tests::refuses_malformed ... ok
+test dns::tests::parse_and_answer ... ok
+test ca::tests::saved_and_loaded ... ok
+test ca::tests::leaf_chains_to_the_ca ... ok
+test proxy::tests::lookups_follow_the_rules ... ok
+test rules::tests::address_intercepts ... ok
+test rules::tests::decisions ... ok
+test rules::tests::globs_at_their_edges ... ok
+test proxy::tests::address_intercepts_name_the_address_and_keep_the_port ... ok
+test rules::tests::intercept_targets ... ok
+test rules::tests::intercept_accounting ... ok
+test rules::tests::public_addresses ... ok
+test rules::tests::ranges_at_their_edges ... ok
+test sni::tests::http_host_header ... ok
+test sni::tests::malformed_hello_has_no_name ... ok
+test sni::tests::tls_server_name ... ok
+test rules::tests::rule_limit ... ok
+test proxy::tests::intercepts_tls_to_the_handler ... ok
+test fakeip::tests::stable_bounded_and_in_range ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/sandcastle_engine-d8b02fc9b8c1fcba)
+
+running 26 tests
+test api::tests::custom_edges ... ok
+test api::tests::instance_types ... ok
+test api::tests::exec_requests ... ok
+test api::tests::monitor_semantics ... ok
+test api::tests::instance_json_forms ... ok
+test api::tests::names_and_signals ... ok
+test api::tests::query_values_decode ... ok
+test exec_stream::tests::refuses_bad_headers ... ok
+test config::tests::checks ... ok
+test config::tests::system_libs ... ok
+test api::tests::start_refusals ... ok
+test linux::cgroup::tests::cpu_shares ... ok
+test load::tests::manifests ... ok
+test load::tests::media_types ... ok
+test linux::files::tests::tails ... ok
+test exec_stream::tests::round_trips_in_pieces ... ok
+test load::tests::names ... ok
+test ports::tests::a_reply_without_a_descriptor ... ok
+test ports::tests::requests ... ok
+test ports::tests::passes_a_descriptor ... ok
+test state::tests::adoption ... ok
+test state::tests::slots ... ok
+test load::tests::unpacks_only_what_it_may ... ok
+test state::tests::snapshot_ttl_and_ids ... ok
+test state::tests::stat_start_ticks ... ok
+test linux::files::tests::copies_sparse ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running unittests src/main.rs (target/debug/deps/sandcastle_engine-2f2d5d28b9c80332)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/sandcastle_guest-93723b50864a41e7)
+
+running 10 tests
+test env::tests::defaults_fill_gaps_only ... ok
+test layer::tests::classifies ... ok
+test mounts::tests::dev_has_a_containers_links ... ok
+test layer::tests::skips ... ok
+test layer::tests::media_types ... ok
+test mounts::tests::image_device_from_the_command_line ... ok
+test mounts::tests::image_read_only ... ok
+test mounts::tests::workload_under_root ... ok
+test passwd::tests::refuses_unknown ... ok
+test passwd::tests::resolves ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/sandcastle_guest-d270ea7b2e447bba)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/sandcastle_krun_spike-b6666f753c7a280d)
+
+running 1 test
+test tests::stats_median ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/snoop.rs (target/debug/deps/sandcastle_snoop-a0720857cbb5bf33)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/sandcastle_nitro_attest-5366d89d14235605)
+
+running 30 tests
+test cbor::tests::heads_round_trip_at_each_width ... ok
+test cbor::tests::indefinite_reserved_and_wrong_kinds_refused ... ok
+test cbor::tests::indefinite_maps_and_arrays ... ok
+test cbor::tests::tag_if_leaves_other_items ... ok
+test chain::tests::fixed_signatures_become_der ... ok
+test der::tests::elements_never_read_past_the_end ... ok
+test cbor::tests::truncation_is_a_fault_not_a_read ... ok
+test der::tests::malformed_times_refused ... ok
+test chain::tests::the_aws_root_is_pinned ... ok
+test der::tests::times_parse_to_unix_seconds ... ok
+test document::tests::envelope_shape_refused ... ok
+test document::tests::a_whole_payload_parses ... ok
+test nonce::tests::bounded_and_expiry_makes_room ... ok
+test nonce::tests::once_and_only_while_live ... ok
+test document::tests::optional_fields_null_or_absent ... ok
+test document::tests::payload_map_of_either_length ... ok
+test tests::a_cut_document_is_refused ... ok
+test document::tests::each_field_rule_refuses ... ok
+test tests::a_guest_reads_its_own_documents_time ... ok
+test tests::a_forgery_does_not_use_up_a_nonce ... ok
+test tests::a_nonce_from_before_a_restart_is_refused ... ok
+test tests::a_replay_is_refused ... ok
+test tests::a_signing_certificate_without_digital_signature_is_refused ... ok
+test tests::a_signature_by_another_key_is_refused ... ok
+test tests::a_valid_document_verifies ... ok
+test tests::a_wrong_root_is_refused ... ok
+test tests::a_wrong_or_missing_nonce_is_refused ... ok
+test tests::certificates_outside_their_validity_are_refused ... ok
+test tests::stale_and_future_documents_are_refused ... ok
+test tests::a_changed_byte_is_refused ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running unittests src/bin/nitro-verify.rs (target/debug/deps/nitro_verify-bbc058c732b2c801)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/nitro_key-2478e88644ba2730)
+
+running 3 tests
+test kms::tests::answers_framed ... ok
+test kms::tests::requests_name_the_key_and_the_recipient ... ok
+test kms::tests::answers_checked ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/sandcastle_nitro_probe-07028eedb8224091)
+
+running 9 tests
+test cms::tests::limits ... ok
+test nsm::tests::answers_match_the_nsm_apis ... ok
+test nsm::tests::requests_match_the_nsm_apis ... ok
+test protocol::tests::commands_validated ... ok
+test protocol::tests::long_lines_refused ... ok
+test protocol::tests::messages_round_trip ... ok
+test cms::tests::opens_openssls_envelopes ... ok
+test cms::tests::another_key_cannot_open ... ok
+test cms::tests::cut_or_changed_envelopes_refused ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.15s
+
+     Running unittests src/main.rs (target/debug/deps/nitro_probe-aa5193a05c0766d3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/sandcastle_nitro_spike-066bcb677569448b)
+
+running 12 tests
+test config::tests::pool_accounting ... ok
+test config::tests::options_drives_and_eif_render ... ok
+test config::tests::slots_in_steps ... ok
+test computer::count_tests::the_scan_counts_across_chunks_and_holes ... ok
+test config::tests::renders_awss_example ... ok
+test initrd::tests::newc_layout ... ok
+test services::tests::amz_dates ... ok
+test net::tests::rules_only_reach_the_forwarder ... ok
+test initrd::tests::reproducible ... ok
+test sigv4::tests::matches_awss_worked_example ... ok
+test sigv4::tests::kms_signs_the_body_and_the_target ... ok
+test config::tests::limits_at_the_edge_and_one_past ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/sandcastle_nitro_spike-4fad99b706120811)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/sandcastle_rootfs-c734be4d1423a4d9)
+
+running 8 tests
+test digest::tests::parses_only_sha256_hex ... ok
+test manifest::tests::config_argv ... ok
+test digest::tests::hasher_checks_size_then_digest ... ok
+test reference::tests::refuses ... ok
+test reference::tests::docker_forms ... ok
+test manifest::tests::selects_platform ... ok
+test registry::tests::challenges ... ok
+test manifest::tests::manifest_limits ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/sandcastle_vm-7f66c15cd9329ee5)
+
+running 14 tests
+test config::tests::disks_in_order ... ok
+test config::tests::tap_checked ... ok
+test config::tests::limits ... ok
+test config::tests::valid_config ... ok
+test jail::tests::leaks_refused ... ok
+test lifecycle::tests::exit_while_booting ... ok
+test jail::tests::host_links_follow_the_host ... ok
+test jail::tests::tap_binds_tun ... ok
+test lifecycle::tests::invalid_refused ... ok
+test lifecycle::tests::valid_path ... ok
+test linux::seccomp::tests::execve_only_before_the_runner ... ok
+test linux::seccomp::tests::jumps_land_inside ... ok
+test jail::tests::valid_plan ... ok
+test linux::seccomp::tests::lists_disjoint ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/sandcastle_vm-97e327324e0a9610)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/sandcastle_wire-555812848bf00439)
+
+running 15 tests
+test egress::tests::round_trip ... ok
+test frame::tests::malformed_refused_early ... ok
+test frame::tests::round_trip_any_chunking ... ok
+test frame::tests::data_is_split ... ok
+test message::tests::error_reply_truncated ... ok
+test message::tests::leftover_after_frames ... ok
+test message::tests::invalid_refused_both_ways ... ok
+test message::tests::process_limits ... ok
+test message::tests::messages_round_trip ... ok
+test message::tests::start_hostname ... ok
+test session::tests::guest_invalid_paths ... ok
+test session::tests::guest_valid_path ... ok
+test session::tests::host_paths ... ok
+test frame::tests::limits_at_the_edge ... ok
+test frame::tests::fuzz_decoder ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sandcastle_egress
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sandcastle_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sandcastle_guest
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sandcastle_nitro_attest
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sandcastle_nitro_probe
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sandcastle_nitro_spike
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sandcastle_rootfs
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sandcastle_vm
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests sandcastle_wire
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test exit 0

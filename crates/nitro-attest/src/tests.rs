@@ -212,3 +212,17 @@ fn a_nonce_from_before_a_restart_is_refused() {
     assert_eq!(verify_issued(&chain.trust(), &mut after, &doc, T0_MS), Err(AttestError::NonceUnknown));
     assert!(verify_issued(&chain.trust(), &mut before, &doc, T0_MS).is_ok(), "the document itself was valid");
 }
+
+// Goal: a guest can read its own document's time and fields without a
+// clock (it has none yet), and a changed byte still fails the parse or
+// changes what it reads. Method: the default document, read unverified.
+#[test]
+fn a_guest_reads_its_own_documents_time() {
+    let chain = Chain::new();
+    let f = Fields::new();
+    let doc = testkit::document(&chain, &f);
+    let a = crate::read_unverified(&doc).unwrap();
+    assert_eq!(a.timestamp_ms, T0_MS);
+    assert_eq!(a.nonce, f.nonce);
+    assert!(crate::read_unverified(&doc[..doc.len() / 2]).is_err());
+}

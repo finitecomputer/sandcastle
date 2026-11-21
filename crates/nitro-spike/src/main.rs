@@ -16,13 +16,23 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("initrd") => run_initrd(&args[1..]),
         #[cfg(target_os = "linux")]
-        Some(s @ ("boot" | "canary" | "attest" | "release")) => {
+        Some(s @ ("boot" | "canary" | "attest" | "release" | "agent" | "network" | "lives" | "conformance" | "forged" | "hold" | "exec" | "density" | "busy")) => {
+            use sandcastle_nitro_spike::{computer, scenarios};
             let rest = &args[1..];
             let r = match s {
-                "boot" => sandcastle_nitro_spike::scenarios::boot(rest),
-                "canary" => sandcastle_nitro_spike::scenarios::canary(rest),
-                "attest" => sandcastle_nitro_spike::scenarios::attest(rest),
-                _ => sandcastle_nitro_spike::scenarios::release(rest),
+                "boot" => scenarios::boot(rest),
+                "canary" => scenarios::canary(rest),
+                "attest" => scenarios::attest(rest),
+                "release" => scenarios::release(rest),
+                "agent" => computer::agent(rest),
+                "network" => computer::network(rest),
+                "lives" => computer::lives(rest),
+                "conformance" => computer::conformance(rest),
+                "hold" => computer::hold(rest),
+                "exec" => computer::exec(rest),
+                "density" => computer::density(rest),
+                "busy" => computer::busy(rest),
+                _ => computer::forged(rest),
             };
             r.map(|v| println!("{}", serde_json::to_string_pretty(&v).expect("JSON"))).map_err(|e| e.to_string())
         }
@@ -38,7 +48,8 @@ fn main() -> ExitCode {
 }
 
 fn run_initrd(args: &[String]) -> Result<(), String> {
-    let probe = flag(args, "--probe").ok_or("--probe is required")?;
+    // `--init` (sandcastle-guest) or `--probe` (the probe): the initrd's /init.
+    let probe = flag(args, "--init").or_else(|| flag(args, "--probe")).ok_or("--init is required")?;
     let out = flag(args, "--out").ok_or("--out is required")?;
     let init = std::fs::read(probe).map_err(|e| format!("{probe}: {e}"))?;
     let archive = sandcastle_nitro_spike::initrd::probe(&init);

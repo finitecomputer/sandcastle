@@ -62,7 +62,7 @@ pub fn log_tail(dir: &Path) -> String {
 
 /// Waits for `listener` to have a connection, at most until `deadline`,
 /// while `child` lives.
-fn accept(listener: &UnixListener, child: &mut Child, deadline: Instant, dir: &Path) -> Result<UnixStream, Failure> {
+pub(crate) fn accept(listener: &UnixListener, child: &mut Child, deadline: Instant, dir: &Path) -> Result<UnixStream, Failure> {
     // Bounded by the deadline.
     loop {
         let mut pfd = libc::pollfd { fd: listener.as_raw_fd(), events: libc::POLLIN, revents: 0 };
@@ -97,7 +97,7 @@ pub fn launch(sandbox: &Sandbox, parent: &Parent, dir: &Path) -> Result<Session,
     let log = std::fs::File::create(dir.join("firecracker.log")).map_err(|e| fail("the log", e))?;
     let log2 = log.try_clone().map_err(|e| fail("the log", e))?;
     let spawned = Instant::now();
-    let mut child = Process::new(FIRECRACKER)
+    let child = Process::new(FIRECRACKER)
         .args(["--no-api", "--config-file"])
         .arg(&config_path)
         .stdin(Stdio::null())
@@ -106,7 +106,9 @@ pub fn launch(sandbox: &Sandbox, parent: &Parent, dir: &Path) -> Result<Session,
         .spawn()
         .map_err(|e| fail("spawning Firecracker", e))?;
     let pid = child.id();
-    let stream = accept(&listener, &mut child, spawned + Duration::from_millis(BOOT_MS_MAX), dir)?;
+    // Every failure from here takes the sandbox down with it.
+    let mut child = Reaped(Some(child));
+    let stream = accept(&listener, child.0.as_mut().expect("held"), spawned + Duration::from_millis(BOOT_MS_MAX), dir)?;
     let connect_ms = ms(spawned.elapsed());
     stream.set_read_timeout(Some(Duration::from_millis(ANSWER_MS_MAX))).map_err(|e| fail("the probe's socket", e))?;
     let writer = stream.try_clone().map_err(|e| fail("the probe's socket", e))?;
@@ -117,6 +119,7 @@ pub fn launch(sandbox: &Sandbox, parent: &Parent, dir: &Path) -> Result<Session,
         return Err(Failure(format!("the probe's first message was not a hello: {hello:?}")));
     }
     assert!(connect_ms <= hello_ms);
+    let child = child.0.take().expect("held");
     Ok(Session { child, reader, writer, spawned, dir: dir.to_path_buf(), pid, connect_ms, hello_ms, hello })
 }
 
@@ -162,6 +165,18 @@ impl Drop for Session {
         if let Ok(None) = self.child.try_wait() {
             let _ = self.child.kill();
             let _ = self.child.wait();
+        }
+    }
+}
+
+/// A child killed when dropped, until it is taken.
+pub(crate) struct Reaped(pub(crate) Option<Child>);
+
+impl Drop for Reaped {
+    fn drop(&mut self) {
+        if let Some(c) = self.0.as_mut() {
+            let _ = c.kill();
+            let _ = c.wait();
         }
     }
 }

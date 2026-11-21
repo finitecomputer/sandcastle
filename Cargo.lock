@@ -998,6 +998,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "sandcastle-nitro-key"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hex",
+ "libc",
+ "rsa",
+ "rustls",
+ "rustls-pki-types",
+ "sandcastle-nitro-attest",
+ "sandcastle-nitro-probe",
+ "serde",
+ "serde_json",
+ "sha2",
+ "webpki-roots",
+]
+
+[[package]]
 name = "sandcastle-nitro-probe"
 version = "0.1.0"
 dependencies = [
@@ -1018,13 +1036,21 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "libc",
  "memchr",
+ "ring",
+ "sandcastle-egress",
  "sandcastle-nitro-attest",
  "sandcastle-nitro-probe",
+ "sandcastle-vm",
+ "sandcastle-wire",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

@@ -213,12 +213,17 @@ this backend loses (memory given back, pause).
 
 | Path | What | Tested where |
 |---|---|---|
-| `crates/nitro-attest` (`sandcastle-nitro-attest`) | The attestation verifier: COSE Sign1 with ES384, the chain to the pinned root, validity, freshness, a single-use nonce. Pure: the caller passes the time and the randomness. Written to become celld's. Its `nitro-verify` binary is the operator's check of a document. | Any host: 29 tests on self-made documents; real documents on the operator's machine (line 4) |
+| `crates/nitro-attest` (`sandcastle-nitro-attest`) | The attestation verifier: COSE Sign1 with ES384, the chain to the pinned root, validity, freshness, a single-use nonce. Pure: the caller passes the time and the randomness. Written to become celld's. Its `nitro-verify` binary is the operator's check of a document; `read_unverified` is a guest's read of its own document's time. | Any host: 30 tests on self-made documents; real documents on the operator's machine (line 4) |
 | `crates/nitro-probe` (`sandcastle-nitro-probe`) | The guest's probe: a static init (aarch64 musl, pure Rust) that says hello over vsock, holds canaries, asks its NSM for documents and opens KMS's CMS envelope; its protocol, the NSM's CBOR and the CMS walk | Any host: 9 tests (the NSM API's own encodings, OpenSSL-made envelopes); on Nitro: lines 2 to 5 |
-| `crates/nitro-spike` (`sandcastle-nitro-spike`) | The driver: Firecracker's configuration and the pool's accounting (`config`), the probe's initrd (`initrd`), and on the parent a sandbox's life (`run`), what the parent can read (`scan`) and each line's scenario (`scenarios`: `boot`, `canary`, `attest`, `release`) | Any host: 7 tests; on Nitro: lines 2 to 5 |
-| `crates/nitro-spike/host/parent-ready.sh` | Line 1: a fresh AL2023 parent to ready, then its facts as JSON | Run (line 1) |
-| `crates/nitro-spike/host/guest-kernel.sh` | The guest kernel the spike controls (Amazon Linux's 6.18 tree, Firecracker's CI config, NSM, dm-verity) | Run: built in about 4 minutes on the parent |
-| `crates/nitro-spike/host/teardown.sh` | Line 12: list or remove everything tagged for the spike | `list` run |
+| `crates/nitro-spike` (`sandcastle-nitro-spike`) | The driver: Firecracker's configuration and the pool's accounting (`config`), the probe's initrd (`initrd`), and on the parent a sandbox's life (`run`), what the parent can read (`scan`) and lines 2 to 5's scenarios (`scenarios`). From line 6: a computer with sandcastle's guest (`guest`: its lifecycle and agent over vsock), its tap (`net`), the parent's services (`services`: the egress proxy, the stand-in model and handler, the KMS signer), SigV4 (`sigv4`), and lines 6 to 10's scenarios (`computer`: `agent`, `network`, `lives`, `conformance`, `forged`, `hold`, `exec`, `density`, `busy`) | Any host: 12 tests; on Nitro: lines 2 to 10 |
+| `crates/nitro-key` (`sandcastle-nitro-key`) | In the guest: the disk's key from KMS over TLS it ends itself, Amazon's roots pinned; the clock from the NSM | Any host: its tests; on Nitro: line 8 |
+| `crates/guest` (changed) | Boots as an initrd's init (leaves the initramfs's root), its root named by `sandcastle.image=` | Its tests; on Nitro: line 6 |
+| `crates/vm` (changed) | Builds on arm64: seccomp lists for x86_64 only, failing closed elsewhere | Its tests |
+| `crates/nitro-spike/host/parent-ready.sh` | Line 1: a fresh AL2023 parent to ready, then its facts as JSON | Run (line 1, and line 10's resize) |
+| `crates/nitro-spike/host/guest-kernel.sh` | The guest kernel the spike controls (Amazon Linux's 6.18 tree, Firecracker's CI config, NSM, dm-verity, `dm-mod.create=`, writes to mounted block devices), built to the same bytes each time | Run: built in about 4 minutes on the parent, twice to the same bytes |
+| `crates/nitro-spike/host/verity-image.sh` | An image's root as a raw ext4 disk with its verity tree, built to the same bytes each time; its table and root hash as JSON | Run (line 6) |
+| `crates/nitro-spike/host/nitro-entrypoint.sh` | The image's entrypoint: the clock, the key, FPAC's mount at Hermes' home, then Hermes | Run (lines 6 to 10) |
+| `crates/nitro-spike/host/teardown.sh` | Line 12: list everything tagged for the spike, or remove all of it or the types named | `list` and `delete s3-bucket` run |
 
 ### Dependencies
 
@@ -267,7 +272,7 @@ this backend loses (memory given back, pause).
 
 ## Results
 
-### Status (2026-11-20): lines 1 to 5 measured; stopped for review
+### Status (2026-11-21 UTC): all twelve lines measured, the design written; the parent stopped
 
 | # | What | Result |
 |---|---|---|
@@ -276,6 +281,13 @@ this backend loses (memory given back, pause).
 | 3 | What the parent sees | Guest memory: **found** from the parent in direct mode; **not found** in confidential mode, where the parent reads the sandbox's pages as zeros. A plain block device: found in both. The console: hidden unless in debug mode |
 | 4 | Attestation | Real documents with the caller's nonce, **verified on the operator's machine** down to the pinned AWS root. Same image twice: PCR 0, 1, 2, 5, 6 equal; a changed command line changes 0, 1, 6; debug mode zeroes 0, 1, 2, 5, 6 |
 | 5 | Key release | A key whose policy requires image A's PCR0: **released to image A** and opened only inside it; **denied** to image B, to A in debug mode, to A with overcommit, and to the parent without attestation |
+| 6 | Our guest | sandcastle's guest agent as init, Hermes' image as the root under dm-verity (its root hash on the measured command line): ready **927 ms** after spawn, an exec round trip **0.5 ms**; stdin and exit codes right; a changed byte of the root refused (EIO) |
+| 7 | Network | Through sandcastle's egress proxy on the parent: an intercepted host answered by the handler; internet off; the metadata service and the parent's own address refused. Leak 1 recorded: the proxy reads intercepted traffic |
+| 8 | Sealed disk | The key reaches the guest **only over TLS the guest ends**, Amazon's roots pinned; the parent signs a hash and carries bytes, and **cannot choose or learn the key** (a forged envelope and an intercepting CA both refused). FPAC's conformance **19 of 19**; the canary **0** in the store and the scratch disk, against 15 to 18 with no key (modelled from measured S3 round trips) |
+| 9 | Wake | From the second wake on: FPAC mounted **1.13 s** after spawn at 1 GB, 1.09 to 1.32 s at 10 GB; Hermes' first reply **14.3 s**, of which about 9 s is the first read of its files from the root image (modelled from measured S3 round trips) |
+| 10 | Density and cost | An idle Hermes: 238 MiB resident, but its 3 GiB stay taken. On an 8-vCPU `m8g.2xlarge`: **8 computers of 3 GiB or 4 of 6 GiB** (3 without overcommit); **$32.76 and $65.53 per awake computer-month** on demand |
+| 11 | Build | Workspace clippy (warnings denied) clean and **147 of 147 tests** on arm64, after two small fixes; x86_64 by CI |
+| 12 | Left behind | The S3 bucket removed; the parent **stopped** and its KMS key kept, by decision: **about $5.80 a month** |
 
 **Spent on lines 1 to 5:** the parent (`m8g.xlarge`, **$0.17952 an hour**
 on demand in us-east-2, from AWS's price list) ran 25 minutes ($0.076);
@@ -284,6 +296,14 @@ and the KMS key ($1 a month, prorated) add about half a cent. About $0.08
 in all. The plan still reported $120.00 of credits at the stop (billing
 lags). The parent is **stopped** (it then costs its disk alone, $0.0066 an
 hour); the KMS key and the free resources stay for lines 6 on.
+
+**Spent in all, lines 1 to 12:** the parent ran about 122 minutes as
+`m8g.xlarge` ($0.17952 an hour: $0.36) and 6.4 minutes as `m8g.2xlarge`
+for line 10 ($0.35904 an hour: $0.04). Its disk, its public address
+while running, the KMS key (prorated), about fifty KMS calls and the S3
+timing bucket add about $0.07. **About $0.47 in all.** The plan still
+reports $120.00 of credits (billing lags), well above the $50 line. The
+parent is stopped.
 
 ### Deviations from the plan, and why
 
@@ -315,6 +335,23 @@ hour); the KMS key and the free resources stay for lines 6 on.
 6. **The probe is a crate of its own** (pure Rust, static musl), and
    reuses nothing from `sandcastle-guest`: lines 1 to 5 need a minimal
    guest; line 6 runs sandcastle's own.
+7. **Line 8's key and store changed by decision** (the coordinator,
+   2026-11-20): the key comes over TLS the guest ends, from
+   `GenerateDataKey` and `Decrypt` with the guest's document as the
+   recipient, not line 5's key; the store is FPAC's folder remote on the
+   parent with S3's measured round trips, not objects in an S3 bucket.
+8. **Hermes' first reply is a one-shot `hermes chat`**, not a message
+   through its gateway: upstream's image has no fragment bridge, and the
+   one-shot needs no platform configured. FPAC's numbers it is set beside
+   go through the gateway (line 9 says what differs).
+9. **Scratch disks moved off the parent's `/run`.** They were sparse files
+   on a tmpfs of a fifth of the parent's memory (3.1 GiB). The first 10 GB
+   fill filled it, the guest's scratch ext4 got write errors and went
+   read-only, and FPAC fenced itself ("the cache file: Read-only file
+   system"), as it should. They are now on the parent's disk, and each
+   life's is deleted after its scan.
+10. **Line 10's 8-vCPU numbers** come from the same instance resized to
+    `m8g.2xlarge` for that line alone.
 
 ### Line 1: the host (`line1-host.json`)
 
@@ -484,6 +521,369 @@ by calling KMS over TLS it ends itself, the parent relaying only bytes.
 Line 8's key, and the design for disks sealed with keys released by
 attestation, have to take the second way or generate the key inside.
 
+**Who can change the rule: anyone who administers the project.** The
+policy's first statement gives the project's administrators `kms:Put*`,
+which is `PutKeyPolicy`. So whoever administers the AWS project can
+rewrite the release rule at any time, in one call. They could drop the
+PCR0 condition, or add another image's PCR0, and then decrypt every
+wrapped key the parent keeps. AWS can too. The rule holds only because
+we choose to keep it. It is not a promise our users can check, and it
+does not meet "repair access is the user's decision, never ours alone".
+The design (below, "A release rule we cannot change alone") says what
+would close this. Nothing here changes it.
+
+### The guest kernel, built to the same bytes (`guest-kernel.json`)
+
+The kernel used to name the parent's host in its version string (`uname
+-v`, and the boot log of `line2-confidential-debug-console.log`, now
+scrubbed as `<parent-host>`). `guest-kernel.sh` now fixes the build's
+user, host, counter and time (`KBUILD_BUILD_USER=builder`,
+`KBUILD_BUILD_HOST=nitro-spike`, `KBUILD_BUILD_VERSION=1`, the time the
+source tag's own commit date) and sets `LOCALVERSION` empty. **Built twice
+from a clean tree, the two images were byte-identical** (SHA-256
+`fed9687f…`, `kernel-twice.txt`). PCR0 is a function of the image, the
+initrd, the command line and the launch's flags (line 4: the same inputs
+twice gave the same PCR0), so the same source and config give the same
+PCR0 on any machine. The final kernel adds one line to the config
+(`CONFIG_BLK_DEV_WRITE_MOUNTED`, line 8) and is a third build of the same
+script (`09f1ba2c…`); it was not built twice.
+
+### Line 6: our guest (`line6-agent.json`)
+
+sandcastle's own guest agent is the sandbox's init, reached by
+sandcastle-vm's own client over vsock. The root is upstream Hermes'
+arm64 image (v0.23.2, plus e2fsprogs for FPAC's `mkfs`) as a raw ext4
+disk under dm-verity. `verity-image.sh` builds it the same way each time
+(a fixed time, UUID, hash seed and salt). The hash tree is on a second
+disk, and the verity table, root hash included, is on the measured
+command line (`dm-mod.create=`). So PCR0 covers every byte of the root.
+One launch, 2 vCPUs, 4 GiB:
+
+| What | Result |
+|---|---|
+| Spawn to the agent's hello over vsock | 904 ms |
+| Spawn to ready | 927 ms (the guest's own uptime at ready: 124 ms) |
+| An exec of `true`, round trip | **0.5 ms** median (0.5–7.2), n = 20 |
+| stdin | echoed back exactly |
+| An exit code | 7, with stdout and stderr apart |
+| The root | `/dev/dm-0`: verity over the image disk, the tree on the other |
+| A changed byte of the root disk | **refused**: one bit flipped in the image on the parent (inside a file planted for it, found with `debugfs`); reading that file gives EIO, the kernel logs "data block 567496 is corrupted", and another file still reads. The byte was put back after |
+| PCR0 of this image | `0cfbaab0…`; the key's policy names it from here on |
+
+The image's record is `line6-image.json`. Its `tree_bytes` is the size of
+the root's files, a misnamed field, now `files_bytes` in the script.
+
+Four things sandcastle's guest needed here, each a fact about the
+platform:
+
+- **It boots as an initrd's init.** `pivot_root` refuses an initramfs's
+  root, so the guest first moves itself onto a tmpfs and runs itself again
+  (`sys::leave_initrd_root`). It tells an initramfs by the root's
+  filesystem type, not by its own name: krun runs it as `/init` too.
+- **The root is the device the command line names** (`sandcastle.image=`,
+  only `/dev/dm-N`, only once), so the measured line decides it, not the
+  parent.
+- **A confidential guest has no clock.** It boots at 1970, and TLS then
+  refuses every certificate as not yet valid. `nitro-key settime` sets the
+  clock from the NSM's document, which is the hypervisor's signed time,
+  never the parent's word. Here that was 961 ms after spawn.
+- **sandcastle-vm builds on arm64.** Its seccomp lists name x86_64 calls
+  only. On other architectures the lists are now empty, and the filter's
+  first check (x86_64's audit architecture) kills a krun jail at its first
+  call: it fails closed until lists are gathered for arm64. The spike uses
+  only the crate's client.
+
+### Line 7: the network (`line7-network.json`)
+
+The guest's one NIC is a tap on the parent (`nitrotap0`). nftables there
+sends all of its TCP and DNS to sandcastle's egress forwarder and proxy,
+as on krun. The policy: the internet off, KMS's host allowed (spliced, not
+opened), and three intercepts: `https handled.example.com`, `http
+fpac.fragment.internal` (line 8's store), `http model.example.com` (the
+stand-in model).
+
+| From the guest | Result |
+|---|---|
+| `https://handled.example.com/through/the/proxy` | **answered by the handler** on the parent, through the proxy's TLS (the guest trusts the proxy's CA, which is handed to it at the start) |
+| `http://model.example.com/v1/models` | answered by the stand-in model |
+| `example.org`, internet off | does not resolve (the proxy refuses the name) |
+| `1.1.1.1:80` by address | refused: "the internet is off" |
+| `169.254.169.254` (the parent's metadata service) | **refused**: "not a public address" |
+| The parent's own address, port 22 | refused: "the node's own address" |
+| `kms.us-east-2.amazonaws.com` | resolves (to the proxy's own address range), spliced through as bytes |
+
+**Leak 1, recorded, not fixed:** this proxy runs on the parent. For an
+intercepted host it ends the guest's TLS with its own CA and reads every
+request in plaintext; the handler's answer above echoes the path it saw.
+Only a spliced host (KMS here) passes as bytes it cannot read. The design
+below moves it inside the boundary.
+
+### Line 8: the sealed disk
+
+**The key** (`lives-sealed-1gb.json`, `line8-forged-old-flow.json`,
+`line8-intercept-kms.txt`, `line8-kms-key-policy.json`).
+
+The disk key now reaches the guest only over TLS that ends inside the
+guest. `nitro-key` (in the measured image) makes a fresh RSA-2048 key and
+an NSM document carrying it. Then it calls KMS itself: rustls, with only
+Amazon's five roots trusted (Amazon Root CA 1 to 4 and Starfield Services
+G2, picked from `webpki-roots` and asserted by count), to
+`kms.us-east-2.amazonaws.com`. The TCP goes through line 7's egress path,
+where KMS is a spliced host: a tunnel the parent carries and does not
+open. Which KMS key it uses comes from the measured command line
+(`nitro.kms_key=`), never from the parent.
+
+- **A new disk:** `GenerateDataKey` with the guest's document as the
+  `Recipient`. KMS answers the wrapped key (`CiphertextBlob`, which the
+  parent keeps) and the key itself only as `CiphertextForRecipient`, an
+  envelope to the guest's RSA key.
+- **A wake:** `Decrypt` of the wrapped key the parent hands back, the
+  same recipient rule.
+- The guest opens the envelope and writes the key to a tmpfs file, mode
+  0600, for FPAC's `--key-file`; FPAC reads it and removes it.
+
+**Signing: the guest composes the request and the parent signs it.** That
+was the smaller of the two options. The parent's signer (`sigv4.rs`, 115
+lines with its tests, and about 80 lines in `services.rs`) gets only the
+request's target and its body's SHA-256. It refuses any target but `Decrypt` and
+`GenerateDataKey`, and signs with the role's short-lived credentials from
+its metadata service. No credential ever enters the guest, and the guest
+needs no STS or metadata client. AWS's own worked SigV4 example is the
+signer's test. The guest's side, `nitro-key`, is 356 lines with its
+tests. It uses rustls, ring and webpki-roots, already in the lock for the
+egress proxy, and the probe's RSA and CMS code. No new dependency.
+
+**What the parent can still do,** and what it cannot:
+
+- **Refuse:** not sign, or not carry the bytes. The guest gets no key,
+  FPAC never mounts, and the computer stops before its entrypoint (fail
+  closed).
+- **Delay:** hold the bytes. Each read waits at most 30 s
+  (`IO_MS_MAX`); then the start fails as above.
+- **Replay:** it cannot replay a request. It sees only TLS records of a
+  fresh session, and a recorded session does not play into a new one.
+  What it can replay is the **wrapped key**: it could hand back another
+  disk's wrapped key under the same KMS key, and the guest would open
+  that disk if the parent also serves its objects. Binding the disk's name
+  as KMS encryption context closes this only when the guest learns which
+  disk it should be from a party it trusts (the design: the attested
+  control channel). Here the parent decides which disk the guest opens.
+- **It cannot choose the key.** The guest trusts only an answer from
+  KMS's own TLS. A forged envelope never reaches it, and when the proxy is
+  told to intercept KMS's host with its own CA, the guest refuses: "invalid
+  peer certificate: UnknownIssuer", no key, no mount
+  (`line8-intercept-kms.txt`).
+- **It cannot learn the key.** KMS releases it only inside an envelope to
+  the RSA key in a document whose PCR0 the policy names. Only an NSM of a
+  sandbox running that image makes such a document, and that image never
+  exports its RSA key. The parent's role alone, or with a debug or other
+  image's document, is denied (line 5). What the parent signed, in full:
+  six records, each a target and a body's hash
+  (`what_the_parent_signed`).
+
+**Line 5's flow, kept as evidence of its weakness** (`line8-forged-old-
+flow.json`): the parent never calls KMS. It seals a value it chose, with
+OpenSSL, to the public key in the guest's own document. The guest of the
+old flow opens it and takes it (SHA-256 `49405844…`, the parent's own
+value). In the new flow there is no envelope from the parent to accept.
+The guest reads KMS's answer only from inside its own TLS session.
+
+**The store** (`line8-s3-rtt.json`, `line8-conformance.json`). As
+decided, FPAC's test-kit folder remote runs on the parent (`fpac-bench
+serve-folder`, a new subcommand in FPAC's branch), behind the egress
+proxy's intercept for `fpac.fragment.internal`, so the guest reaches it
+over its own network exactly as it would reach the platform's route. Its
+per-object delay and put rate come from real S3 round trips measured from
+the parent: a tagged bucket in us-east-2, SigV4 by curl.
+
+| S3, from the parent | Measured |
+|---|---|
+| A 64 KiB ranged GET | first byte p50 23.5 ms, p99 37.2 ms; whole p50 25.3 ms (16.4–69.2), n = 59 |
+| An 8 MiB PUT, one stream | p50 90.9 ms: 89.8 MB/s, n = 15 |
+| 8 MiB PUTs, eight streams | 661.7 MB/s (32 puts in 0.41 s) |
+
+So the folder remote ran with `object_ms` = 23 and `put_bytes_per_s` =
+90,000,000 (one stream, the slower). Every number below that depends on
+the store is **modelled from measured S3 round trips**.
+
+| What | Result |
+|---|---|
+| FPAC's conformance suite, from inside the sandbox, through the egress path | **19 of 19 pass** (modelled from measured S3 round trips) |
+| A canary written into the sealed disk: in the store's objects, on the parent | **0** in every life, n = 6 (`lives-sealed-1gb.json`) |
+| The same canary on the guest's scratch disk (FPAC's cache file), on the parent | **0** in every life, n = 6 |
+| The control: the same run with no key (FPAC plain) | **15 and 18** copies in the store, **9 and 3** on the scratch disk (`lives-plain-1gb.json`) |
+| The canary read back on every wake | yes, 6 of 6 |
+| The key across wakes | the same (its SHA-256, from the guest, equal in all 6 lives) |
+| The parent holds | the wrapped key and ciphertext objects only |
+
+Two fixes found on the way, kept as findings:
+
+- **FPAC needs `CONFIG_BLK_DEV_WRITE_MOUNTED=y` in the guest kernel.**
+  FPAC's daemon keeps its loop device open for writing while ext4 is
+  mounted on it, and Firecracker's CI config turns that off (EBUSY at the
+  mount).
+- **A scan that cannot read is not a zero.** The first canary counts on
+  the scratch disk read 0 even in the plain control, because the scan read
+  each 24 GiB sparse image into memory and took the failure for "none".
+  The scan now streams the file's data and skips its holes, fails loudly
+  on any error, and has a test. The plain control above is what shows the
+  scratch-disk count can be non-zero.
+
+### Line 9: the wake (`lives-*.json`, `line9-hermes-cold-warm.txt`)
+
+Each life is a new sandbox: a fresh scratch disk, the key from KMS
+(`GenerateDataKey` on life 0, `Decrypt` after), FPAC's open and mount at
+Hermes' home, then one `hermes chat` against the instant stand-in model,
+then FPAC's sleep (SIGTERM, its last flush). 2 vCPUs, 4 GiB, a 40 GB
+volume. Times are from Firecracker's spawn. Every number in this section
+is **modelled from measured S3 round trips**, except the agent's ready
+time and the key's.
+
+| From the second wake on, median (range) | 1 GB disk, n = 4 | 10 GB disk, n = 2 |
+|---|---|---|
+| The agent ready | 738 ms (732–744) | 759, 760 ms |
+| The key in hand (the clock, a new RSA key, the NSM, KMS over TLS) | 998 ms (958–1,153) | 951, 1,154 ms |
+| FPAC mounted | **1,127 ms** (1,104–1,273) | **1,085, 1,315 ms** |
+| FPAC's open: one round to the store | 23 asks, 40–63 ms; 29 map pages | 23 asks, 43–70 ms; 64 map pages |
+| Misses before the reply | 0 | 0 |
+| Hermes' first reply | **14.3 s** (14.25–24.3) | **14.1, 14.3 s** |
+| The sleep: FPAC's last flush | 2.58 s (2.57–2.61) | 2.56, 2.55 s |
+
+- **The key costs about 260 ms** after ready (the median). `nitro-key`
+  itself took 118–740 ms over the ten lives, almost all of it the fresh
+  RSA-2048 key (83–700 ms: its prime search varies). KMS's round trip was
+  29–37 ms and the parent's signature about 2 ms. The RSA key could be
+  made at boot, in parallel with the clock; it is in series here.
+- **The first wake** reads more of the store: mounted at 1.33 s (1 GB) and
+  2.0 s (10 GB), with Hermes' reply at 15.5 and 16.8 s.
+- **A new 10 GB disk**: the fill wrote 10 GiB in 168 s (64 MB/s, behind
+  the modelled 90 MB/s put), and its sleep took 33.5 s while the backlog
+  drained.
+- **The canary**, read back on every wake: yes, at both sizes. The key was
+  the same on every wake, and the canary was in neither the store nor the
+  scratch disk.
+
+**Where Hermes' 14 s go.** One computer, the plain disk, one `hermes chat`
+and then another: **13.0 s cold, 4.1 s warm**. So about 9 s is the first
+read of Hermes' files from the root image. The image disk reads at 215
+MB/s in one stream, but only 3,871 random 4 KiB reads a second (about
+0.26 ms each, one virtio round trip; direct mode was not compared), and
+Python's start is thousands of small reads.
+The rest, 4.1 s, is Hermes' one-shot CLI itself.
+
+**Beside FPAC's numbers** (its `docs/results.md`): Hermes' first reply was
+8.52 s on Cloudflare and 2.87 s on krun, through Hermes' gateway (its
+boot, then a message). This is a one-shot CLI, a different path
+(deviation 8), so compare the parts. FPAC's open and mount take about
+130 ms here after the key (modelled, one round at S3's 23 ms), against
+0.97 s on Cloudflare (R2's round, about 300 ms). The cold root image is
+the cost Nitro adds. Not built here: reading the boot's working set ahead,
+in parallel with the key and the mount (FPAC's pack does this for its own
+disk), or an image format with larger reads.
+
+### Line 10: density and cost (`line10-*.json`, `line10-idle-hermes.txt`)
+
+**An idle Hermes**: its gateway under s6 (Hermes' own image entrypoint,
+`gateway run`, its loopback API server on), idle for 90 s, in a 3 GiB
+computer.
+
+| Inside the guest | |
+|---|---|
+| `hermes` (the gateway) | 238 MiB resident |
+| `fpac` | 12.5 MiB resident |
+| The guest's memory | 2,913 MiB total, 2,471 MiB available, 196 MiB page cache |
+
+The pool holds the whole 3 GiB (3,154 MiB with its overheads) for the
+computer's life, whatever it uses: nothing is given back (the design,
+"What this backend loses").
+
+**How many fit an 8-vCPU parent.** The same instance resized to
+`m8g.2xlarge` (8 vCPUs, 31.5 GiB) for this line alone
+(`line10-host-2xlarge.json`): a 26 GiB pool, leaving 4.8 GiB and one vCPU
+to the parent; 7 vCPUs in the CPU pool; 20 slots. Each sandbox was the
+probe with a computer's devices: four disks (three, and one standing in
+for the NIC) and the vsock. Launched one after another, kept, until one
+was refused:
+
+| Each | `cpu_overcommit` | Fit | The next one refused by Firecracker |
+|---|---|---|---|
+| 3 GiB, 2 vCPUs | on | **8** | "Failed to allocate CMA memory: … Out of memory" |
+| 6 GiB, 2 vCPUs | on | **4** | the same |
+| 3 GiB, 2 vCPUs | off | **3** | "NE_ERR_NO_CPUS_AVAIL_IN_POOL" |
+
+- **The pool's overheads, measured:** each sandbox takes its memory, 2
+  MiB, and 16 MiB per device in confidential mode: 3,154 MiB at 3 GiB and
+  6,226 at 6 GiB, as `pool_mib()` predicts to the MiB. The 20 slots
+  themselves take 260 MiB of the pool at boot (4 slots took 4 MiB), and
+  each sandbox takes one slot, not one per device.
+- **Without overcommit** a sandbox owns its vCPUs, so the CPU pool (7)
+  limits a node to 3 two-vCPU computers. With it, memory does, and PCR0
+  is the overcommit launch's (line 4): the key's policy must name that one.
+- **A launch with these devices** took 637–750 ms at 3 GiB and 820–870 ms
+  at 6 GiB (the probe, to its first word).
+
+**Busy guests with `cpu_overcommit`** (1 GiB guests, 2 vCPUs each, every
+guest running two 5-second Python loops at once; `line10-busy-*.json`):
+
+| Guests | vCPUs asked, on 7 in the pool | Iterations, all loops | Per loop |
+|---|---|---|---|
+| 1 | 2 | 71.7 M | 35.0–36.7 M |
+| 2 | 4 | 143.0 M | 34.8–36.2 M |
+| 4 | 8 | 277.2 M | 33.4–36.1 M |
+| 6 | 12 | 281.7 M | 8 loops 16.2–18.7 M, 4 loops 32.8–36.8 M |
+
+Up to the pool's size every loop runs at full speed. Past it the total
+stops at the pool's 7 CPUs, and the sharing is uneven: at 6 guests eight
+loops ran at half speed and four at full speed. Overcommit is safe for
+mostly idle computers; a busy node is not fair between them.
+
+**Dollars per awake computer-month,** on demand in us-east-2 (AWS's price
+list): `m8g.2xlarge` **$0.35904 an hour**, $262.10 for a 730-hour month.
+
+| Computer | Per parent | Per awake computer-month |
+|---|---|---|
+| 3 GiB, overcommit on | 8 | **$32.76** |
+| 6 GiB, overcommit on | 4 | **$65.53** |
+| 3 GiB, overcommit off | 3 | $87.37 |
+
+Not counted: each computer's disks on the parent (gp3 at $0.08 a GB-month
+for the scratch actually written; the 3.6 GB image is shared), the store
+(R2 or S3), and KMS ($0.03 per 10,000 calls, one a wake). A computer that
+sleeps costs nothing but its store: these are prices for awake ones.
+
+### Line 11: the build (`line11-clippy.txt`, `line11-test.txt`)
+
+On the parent (arm64, Rust 1.99.0, locked):
+
+- `cargo clippy --workspace --all-targets --all-features -- -D
+  warnings`: **clean**. It needed two fixes first. `c_char` is `u8` on
+  arm64, so a cast in the krun runner that x86_64 needs was a no-op there
+  (now `pointer::cast`). And one test module had to move below the code.
+- `cargo test --workspace --all-features`: **147 passed, 0 failed**.
+- FPAC's branch: `cargo clippy -p fpac-bench --all-targets -- -D
+  warnings` clean on arm64.
+- x86_64 with no AWS: this branch's CI (build, clippy, tests).
+
+### Line 12: what is left (`line12-teardown.txt`)
+
+Changed by decision: the parent and its KMS key stay, the parent stopped;
+everything else no longer needed goes. `teardown.sh` gained `delete
+<type> …` to remove chosen types only. The evidence: `list`, then
+`delete s3-bucket` (the S3 timing bucket, emptied and deleted), then
+`list` again.
+
+| Left in place | Why | A month |
+|---|---|---|
+| The parent, **stopped** (`m8g.xlarge` again, its pool back at 8 GiB) | kept by decision | $0 while stopped |
+| Its root volume, 60 GB gp3 | goes with the parent | $4.80 |
+| The KMS key (policy: the Hermes image's PCR0) | kept by decision | $1.00 |
+| Security group, key pair, IAM role and instance profile | the parent's | $0 |
+| **In all** | | **about $5.80** |
+
+The parent has no public address while stopped. Everything left is
+tagged `project=nitro-spike` and in the inventory, with the bucket marked
+removed.
+
 ### Before line 1: blocked by the free plan (2026-11-20, resolved)
 
 The project was first on AWS's free plan, which launches only
@@ -522,7 +922,7 @@ parent (a small tagged bucket, removed at teardown). Every line-8 and
 line-9 number that depends on it will say "modelled from measured S3
 round trips".
 
-### Acceptance so far
+### Acceptance
 
 | # | What | Result |
 |---|---|---|
@@ -530,17 +930,188 @@ round trips".
 | 2 | Boot | **Measured**: 453 ms confidential, 304 ms direct |
 | 3 | What the parent sees | **Pass**, with what was tried stated |
 | 4 | Attestation | **Pass** on real documents |
-| 5 | Key release | **Pass**; the envelope's lack of authentication recorded |
-| 6 to 10 | Our guest, network, sealed disk, wake, density | Not started (waiting for "continue") |
-| 11 | The build | The three new crates' tests and clippy (warnings denied) pass on arm64 (the parent) and the verifier's on x86_64 here; CI builds and tests the whole workspace on x86_64 |
-| 12 | Nothing left behind | Not yet: the parent (stopped), its disk, the KMS key and four free resources, all tagged and inventoried |
+| 5 | Key release | **Pass**; the envelope's lack of authentication recorded; the project's administrators can rewrite the rule (`kms:Put*`) |
+| 6 | Our guest | **Pass** |
+| 7 | Network | **Pass**; leak 1 recorded, not fixed |
+| 8 | Sealed disk | **Pass**, the store modelled from measured S3 round trips |
+| 9 | Wake | **Measured**, modelled from measured S3 round trips: the mount is quick, the cold root image is not |
+| 10 | Density and cost | **Measured** on `m8g.2xlarge` |
+| 11 | Build | **Pass** on arm64; x86_64 by CI |
+| 12 | Nothing left behind | **Done as changed**: the bucket removed, the parent stopped, the key kept |
 
 ### Gaps
 
-- One instance type, one Region, one day. Boot times on other sizes and
+- One instance family, one Region, one day. Boot times on other sizes and
   on x86 parents are not measured.
 - The boot's firmware part (about 320 ms confidential) is attributed by
   subtraction, not by a timestamp of its own.
 - Line 3's "not found" covers the routes stated; others are AWS's claim.
-- Line 5's Decrypt was made by the parent for the guest (AWS's flow), not
-  by the guest over its own TLS.
+- **The store is modelled.** FPAC's folder remote on the parent, with S3's
+  measured round trips, stands in for the platform's route and S3 or R2.
+  Every line 8 and 9 number that depends on it says so.
+- **Line 9's Hermes is a one-shot CLI**, not a message through its
+  gateway as FPAC measured; the 10 GB wakes are n = 2.
+- **The parent can roll a disk back, or swap one**, today: it keeps the
+  head and the wrapped keys, and it decides which disk a guest opens. The
+  design says what closes it; nothing here does.
+- **Leaks 1 and 2 are unchanged**: the proxy reads intercepted traffic,
+  and the host engine can run any command in a computer. The scratch disk
+  is plain on the parent; only FPAC's disk (and its cache) is sealed, and
+  the canary was written only there.
+- **The release rule is ours to change** (`kms:Put*`), and AWS's.
+- The final kernel's config was built once; the twice-built one lacked one
+  line (`CONFIG_BLK_DEV_WRITE_MOUNTED`).
+- Line 10: one idle sample after 90 s; density with the probe and four
+  small disks standing in for a computer's devices (no NIC); Python loops
+  for the busy guests. The 8-vCPU numbers come from a resize of the same
+  parent.
+- x86_64 is built and tested by CI only; nothing ran on an x86 parent.
+
+## Design (no code)
+
+What the spike would become, if the owner decides to go on. Nothing in
+this section is built.
+
+### sandcastle's Firecracker backend, as PRs
+
+Each row is one PR. "Needs" names the PRs that must land first.
+
+| # | PR | Needs |
+|---|---|---|
+| 1 | **The guest's boot on Nitro**: sandcastle-guest as an initrd's init (it leaves the initramfs's root), its root named by `sandcastle.image=`, its clock from the NSM; with valid/invalid/restart tests. From this spike's `mounts.rs`, `sys.rs`, `init.rs` | – |
+| 2 | **Release assets for a measured image**: `guest-kernel.sh` (reproducible, as here), `verity-image.sh` and the image's verity table, built in CI. Each release publishes its kernel, initrd, image root hash and the **expected PCR0**, recorded by one launch on a release parent until AWS documents the measurement well enough to compute it offline | – |
+| 3 | **A Firecracker engine in `sandcastle-vm`**, beside krun: the configuration writer and pool accounting (`config.rs`), the jailer, a CID and a tap per VM, the egress forwarder per tap, scratch disks on the parent's disk and deleted with their VM, image disks shared read-only | 1 |
+| 4 | **The engine service picks the backend per node** (krun or Nitro), with one API: exec, stdin, exit codes, ports over the NIC, stop. Conformance runs against both | 3 |
+| 5 | **The key in the guest**: `nitro-key` folded into the guest agent, so the key arrives before the entrypoint; the parent's signer as part of the engine; the wrapped key kept beside the disk's head by the platform's route (a fragment change, described below, not made) | 1, 3; FPAC's sealed mode (exists) |
+| 6 | **The attested control channel** (leak 2, below) | 1, 3; the verifier (`nitro-attest`, written to become celld's) |
+| 7 | **The scratch disk sealed** with a key made in the guest at boot, which never leaves it and dies with the life (dm-crypt) | 1 |
+| 8 | **Egress and credentials inside the boundary** (leak 1, below) | 6 |
+| 9 | **Rollback and disk swaps closed** (below) | 5, 6 |
+| 10 | **A release rule we cannot change alone** (below) | 5 |
+| 11 | **The parent as an image**: `parent-ready.sh` as an AMI build, the pool sized per instance type, a node's memory and slot budget published to the scheduler | 3 |
+
+fragment would need, described and not made: its cell's route for FPAC
+stores the wrapped key beside the disk's head and hands it back at each
+start; its scheduler places a computer by memory alone (no ballooning
+here); its exec path speaks the attested channel (PR 6) instead of
+trusting the host engine.
+
+### Leak 1: egress and credentials on the parent
+
+Today the proxy runs on the parent, ends intercepted TLS with its own
+CA, and fills in secrets there (line 7). The design moves it inside the
+boundary:
+
+- **The proxy runs in the guest**, or in a sibling sandbox of its own
+  with its own PCR0. TLS to a vendor then ends inside the boundary, and
+  the parent carries TCP as it carries KMS's bytes now. It can still see
+  addresses, names (SNI) and timing, and refuse or delay, but not read or
+  change.
+- **Secrets are released like the disk key**: by KMS (or the key service
+  below) to a document with the proxy's PCR0, never through the parent.
+- **Intercepts the platform answers** (FPAC's route, the callback route)
+  go over TLS to the cell, with the cell's certificate pinned in the
+  measured image, instead of to a handler on the parent.
+- **The policy** (which hosts, which intercepts) comes over the attested
+  control channel from the cell, not from the parent.
+
+### Leak 2: the control channel
+
+Today the host engine can run any command in a computer: the agent
+accepts exec over vsock from whoever holds the socket. The design:
+
+- At its start the guest makes a key pair and gets an NSM document
+  carrying the public key and a nonce the cell chose.
+- The cell checks the document with `nitro-attest` (line 4: the chain to
+  the pinned root, freshness, the single-use nonce) and its PCR0 against
+  the release's (PR 2).
+- The two then speak over a session keyed to that document (TLS or Noise),
+  end to end; the parent carries its bytes. The agent takes exec, files
+  and ports only on that session.
+- The parent keeps start, stop, kill, refuse and delay. That is
+  availability, never content.
+- **Repair access** (a person running a command in someone's computer) is
+  a grant the owner signs, time-limited and named in the session. Never
+  ours alone. For users who are not technical, the owner's app signs the
+  grant when they say yes in plain words.
+
+### Leak 3: the disks
+
+FPAC's disk is sealed here, with its key released by attestation (line
+8). What is left:
+
+- **The scratch disk** (the overlay's writable layer: anything written
+  outside `/opt/data`, and FPAC's cache, itself sealed) is plain on the
+  parent. PR 7 seals it with a key made at boot that never leaves the guest.
+- **The image disk** is public by design; dm-verity, measured into PCR0,
+  makes it tamper-evident.
+- **Memory** is the Nitro System's to protect (line 3 states what was
+  tried).
+
+### Rollback: a host serving an older valid disk
+
+Every object FPAC writes is authentic under the disk's key, and the key is
+the same in every life. So a parent that keeps an older head and its
+objects can serve them, and the disk opens intact and stale. In this spike
+the folder remote on the parent holds the head too, so **the parent can
+roll a disk back today**. The wrapped-key swap above is the same attack
+with another disk.
+
+The design: the head the guest opens must come with a counter the guest
+can check against something the parent does not hold.
+
+- The guest signs each head it writes with a key derived from the disk's
+  key, counter included. The latest counter is kept by the cell (the
+  platform's state, as in FPAC's design), not by the parent.
+- At a start the cell sends, over the attested channel (leak 2), the disk
+  the guest is to open and the counter it must find. The guest refuses an
+  older head or another disk. The disk's name also goes into KMS's
+  encryption context, so a swapped wrapped key fails at KMS.
+- That moves the trust from the parent to the cell, which is ours. To
+  hold against us too, the counter must also live where we cannot rewrite
+  it: in the key service below, or in the owner's own signed log.
+
+### A release rule we cannot change alone
+
+Line 5's policy lets the project's administrators change the release
+rule in one `PutKeyPolicy` call. AWS can too. Two things would make the
+rule hold against us:
+
+- **A key service in its own sandbox**, with its own published PCR0, holds
+  each disk's wrapping key. It acts only on statements the owner signed,
+  under the owner's key bound to the disk when the disk was made. Examples:
+  "release disk D's key to images whose PCR0 is X", "grant repair access
+  to this person until noon", "accept releases signed by Finite's release
+  key that have been in the public log for a day". The last is a default
+  the owner's app signs once, so a non-technical owner never sees a
+  prompt for an image update. A new image we publish is then released to
+  only after the owner's own rule says yes, and we cannot change the rule.
+- **KMS at most as a second lock.** The key service's own state is
+  sealed so that opening it needs both KMS (policy: the key service's
+  PCR0) and a second share KMS never sees: one held by a key service in
+  another trust domain (another cloud's TEE, another operator), or by the
+  owner's device. Then rewriting the KMS policy alone releases nothing.
+  KMS cannot be the only lock: AWS runs it, and whoever writes its
+  policy holds the rule.
+
+What this costs: a second service on every start's path (one more round
+trip, in parallel with the boot, about 30 ms like KMS's here), and a
+second trust domain to run. What it gives: neither we nor AWS alone can
+release a user's disk.
+
+### What this backend loses
+
+- **Memory given back.** A sandbox's memory is taken from the pool at its
+  launch and is the sandbox's until it stops. There is no balloon and no
+  free-page reporting across the boundary. krun gives an idle Hermes back
+  to 604 MiB from 906 MiB (docs/krun-engine.md); here a 3 GiB computer
+  holds 3 GiB of the pool for its whole life. Density is by the memory
+  asked for, not the memory used (line 10).
+- **Pause and snapshots.** Not tried here. A memory snapshot would need
+  the guest's memory, which the parent reads as zeros (line 3), so at best
+  it could be one the Nitro System makes. Plan as on krun and Cloudflare:
+  an idle computer stops, and a wake is a cold start.
+- **The console**, outside debug mode. Debug mode zeroes the PCRs, so a
+  debugged computer cannot get its key (line 5).
+- **The pool is fixed at the parent's boot** (`nitro_enclaves.mempool=` on
+  its command line). Changing it takes a reboot of the node.

@@ -24,24 +24,6 @@ const DIAL_TRIES_MAX: u32 = 250;
 /// The key KMS encrypts to: RSAES_OAEP_SHA_256 needs an RSA key; 2048
 /// bits is KMS's smallest.
 const RSA_BITS: usize = 2048;
-/// `_IOWR(NSM_MAGIC = 0x0A, 0, struct nsm_raw)`, 32 bytes.
-const NSM_IOCTL_RAW: libc::c_ulong = 0xC020_0A00;
-
-#[repr(C)]
-struct NsmIovec {
-    addr: u64,
-    len: u64,
-}
-
-#[repr(C)]
-struct NsmRaw {
-    request: NsmIovec,
-    response: NsmIovec,
-}
-
-const _: () = assert!(std::mem::size_of::<NsmRaw>() == 32);
-const _: () = assert!(NSM_IOCTL_RAW == (3 << 30) | (32 << 16) | (0x0A << 8));
-
 fn boottime_ms() -> u64 {
     // SAFETY: clock_gettime writes the timespec it is given.
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
@@ -57,7 +39,8 @@ fn mount(source: &str, target: &str, fstype: &str) {
     unsafe { libc::mount(s.as_ptr(), t.as_ptr(), f.as_ptr(), libc::MS_NOSUID, std::ptr::null()) };
 }
 
-fn dial(cid: u32, port: u32) -> std::io::Result<UnixStream> {
+/// Dials the host (or another CID) on vsock: a stream as a unix one reads.
+pub fn dial(cid: u32, port: u32) -> std::io::Result<UnixStream> {
     // SAFETY: a socket call; the descriptor is owned at once.
     let fd = unsafe { libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
     if fd < 0 {
@@ -229,28 +212,9 @@ impl Probe {
         };
         let key_ms = started.elapsed().as_millis() as u64;
         let asked = Instant::now();
-        let request = nsm::attestation_request(None, Some(&nonce), public_key.as_deref());
-        let mut response = vec![0u8; nsm::RESPONSE_BYTES_MAX];
-        let mut raw = NsmRaw {
-            request: NsmIovec { addr: request.as_ptr() as u64, len: request.len() as u64 },
-            response: NsmIovec { addr: response.as_mut_ptr() as u64, len: response.len() as u64 },
-        };
-        let file = match std::fs::OpenOptions::new().read(true).write(true).open("/dev/nsm") {
-            Ok(f) => f,
-            Err(e) => return refused("/dev/nsm", e),
-        };
-        // SAFETY: NSM_IOCTL_RAW with a valid nsm_raw whose buffers outlive
-        // the call; the driver writes the answer's length back into it.
-        let r = unsafe { libc::ioctl(file.as_raw_fd(), NSM_IOCTL_RAW as _, &mut raw as *mut NsmRaw) };
-        if r != 0 {
-            return refused("the NSM's ioctl", std::io::Error::last_os_error());
-        }
-        let len = raw.response.len as usize;
-        assert!(len <= response.len(), "the driver answers within the buffer it was given");
-        let nsm_ms = asked.elapsed().as_millis() as u64;
-        match nsm::attestation_document(&response[..len]) {
-            Ok(document) => Answer::Attested { document_hex: hex::encode(document), public_key_sha256: public_key.map(|k| hex::encode(Sha256::digest(&k))), key_ms, nsm_ms },
-            Err(e) => refused("the NSM's answer", e),
+        match nsm::attest(Some(&nonce), public_key.as_deref()) {
+            Ok(document) => Answer::Attested { document_hex: hex::encode(&document), public_key_sha256: public_key.map(|k| hex::encode(Sha256::digest(&k))), key_ms, nsm_ms: asked.elapsed().as_millis() as u64 },
+            Err(e) => refused("the NSM", e),
         }
     }
 }

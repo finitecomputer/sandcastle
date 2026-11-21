@@ -5,7 +5,11 @@
 # Run on the operator's machine with the AWS CLI:
 #
 #   AWS_PROFILE=<profile> ./teardown.sh list
-#   AWS_PROFILE=<profile> ./teardown.sh delete
+#   AWS_PROFILE=<profile> ./teardown.sh delete [type ...]
+#
+# With types (instance, volume, snapshot, security-group, key-pair,
+# kms-key, s3-bucket, iam-instance-profile, iam-role), delete removes only
+# those: the end of the spike keeps the stopped parent and its key.
 #
 # It prints what it found or removed by type, with each id shortened to a
 # hash, so the output can go into the public evidence; SHOW_IDS=1 prints
@@ -19,7 +23,15 @@ TAG_KEY=project
 TAG_VALUE=nitro-spike
 NAME_PREFIX=nitro-spike
 mode=${1:-}
-[ "$mode" = list ] || [ "$mode" = delete ] || { echo "usage: teardown.sh list|delete" >&2; exit 2; }
+[ "$mode" = list ] || [ "$mode" = delete ] || { echo "usage: teardown.sh list | delete [type ...]" >&2; exit 2; }
+shift
+TYPES="instance volume snapshot security-group key-pair kms-key s3-bucket iam-instance-profile iam-role"
+only=" $* "
+for t in "$@"; do
+    case " $TYPES " in *" $t "*) ;; *) echo "teardown: unknown type $t (one of: $TYPES)" >&2; exit 2 ;; esac
+done
+# want TYPE: delete removes this type (all of them when none is named).
+want() { [ "$only" = "  " ] || [[ "$only" == *" $1 "* ]]; }
 
 aws_r() { aws --region "$REGION" "$@"; }
 show() { # type, id
@@ -53,20 +65,20 @@ for r in $roles; do if [ "$(tagged_role "$r")" = 1 ]; then show iam-role "$r"; f
 for p in $profiles; do if [ "$(tagged_profile "$p")" = 1 ]; then show iam-instance-profile "$p"; fi; done
 if [ "$mode" = list ]; then exit 0; fi
 
-if [ -n "$instances" ]; then
+if [ -n "$instances" ] && want instance; then
     aws_r ec2 terminate-instances --instance-ids $instances >/dev/null
     aws_r ec2 wait instance-terminated --instance-ids $instances
     echo "terminated: $(wc -w <<<"$instances") instance(s)"
 fi
 # Volumes deleted with their instance are gone by now; the rest go here.
-for v in $(aws_r ec2 describe-volumes "${filter[@]}" --query 'Volumes[].VolumeId' --output text); do
+want volume && for v in $(aws_r ec2 describe-volumes "${filter[@]}" --query 'Volumes[].VolumeId' --output text); do
     aws_r ec2 delete-volume --volume-id "$v"
     show deleted-volume "$v"
 done
-for s in $snapshots; do aws_r ec2 delete-snapshot --snapshot-id "$s"; show deleted-snapshot "$s"; done
-for g in $groups; do aws_r ec2 delete-security-group --group-id "$g"; show deleted-security-group "$g"; done
-for k in $keypairs; do aws_r ec2 delete-key-pair --key-pair-id "$k" >/dev/null; show deleted-key-pair "$k"; done
-for k in $kms_keys; do
+want snapshot && for s in $snapshots; do aws_r ec2 delete-snapshot --snapshot-id "$s"; show deleted-snapshot "$s"; done
+want security-group && for g in $groups; do aws_r ec2 delete-security-group --group-id "$g"; show deleted-security-group "$g"; done
+want key-pair && for k in $keypairs; do aws_r ec2 delete-key-pair --key-pair-id "$k" >/dev/null; show deleted-key-pair "$k"; done
+want kms-key && for k in $kms_keys; do
     state=$(aws_r kms describe-key --key-id "$k" --query KeyMetadata.KeyState --output text)
     if [ "$state" != PendingDeletion ]; then
         aws_r kms disable-key --key-id "$k" || true
@@ -74,7 +86,7 @@ for k in $kms_keys; do
     fi
     show scheduled-kms-key-deletion "$k"
 done
-for b in $buckets; do
+want s3-bucket && for b in $buckets; do
     # Every version and delete marker, then the bucket.
     aws_r s3 rm "s3://$b" --recursive --quiet
     while :; do
@@ -85,7 +97,7 @@ for b in $buckets; do
     aws_r s3api delete-bucket --bucket "$b"
     show deleted-s3-bucket "$b"
 done
-for p in $profiles; do
+want iam-instance-profile && for p in $profiles; do
     [ "$(tagged_profile "$p")" = 1 ] || continue
     for r in $(aws iam get-instance-profile --instance-profile-name "$p" --query 'InstanceProfile.Roles[].RoleName' --output text); do
         aws iam remove-role-from-instance-profile --instance-profile-name "$p" --role-name "$r"
@@ -93,7 +105,7 @@ for p in $profiles; do
     aws iam delete-instance-profile --instance-profile-name "$p"
     show deleted-iam-instance-profile "$p"
 done
-for r in $roles; do
+want iam-role && for r in $roles; do
     [ "$(tagged_role "$r")" = 1 ] || continue
     for pol in $(aws iam list-role-policies --role-name "$r" --query 'PolicyNames' --output text); do
         aws iam delete-role-policy --role-name "$r" --policy-name "$pol"
@@ -104,4 +116,4 @@ for r in $roles; do
     aws iam delete-role --role-name "$r"
     show deleted-iam-role "$r"
 done
-echo "teardown: done; run 'list' again to see nothing left"
+echo "teardown: done${*:+ ($*)}; run 'list' again to see what is left"

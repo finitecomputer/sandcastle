@@ -83,7 +83,7 @@ fi
 # network (nftables), and the spike's crates.
 dnf -y -q --setopt=install_weak_deps=False install \
     gcc make git flex bison bc perl elfutils-libelf-devel openssl-devel dwarves \
-    cpio e2fsprogs cryptsetup nftables socat python3 tar gzip
+    cpio e2fsprogs cryptsetup veritysetup nftables socat python3 tar gzip
 
 # 4. Firecracker, checked against the pinned digest before it is installed.
 installed=$(/usr/local/bin/firecracker --version 2>/dev/null | head -n1 || true)

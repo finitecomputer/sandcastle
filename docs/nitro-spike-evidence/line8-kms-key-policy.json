@@ -1,0 +1,44 @@
+{
+ "Version": "2012-10-17",
+ "Statement": [
+  {
+   "Sid": "AdministerButNeverUse",
+   "Effect": "Allow",
+   "Principal": {
+    "AWS": "arn:aws:iam::<project>:root"
+   },
+   "Action": [
+    "kms:Describe*",
+    "kms:Enable*",
+    "kms:List*",
+    "kms:Put*",
+    "kms:Update*",
+    "kms:Disable*",
+    "kms:Get*",
+    "kms:Delete*",
+    "kms:TagResource",
+    "kms:UntagResource",
+    "kms:ScheduleKeyDeletion",
+    "kms:CancelKeyDeletion"
+   ],
+   "Resource": "*"
+  },
+  {
+   "Sid": "ReleaseOnlyToTheComputerImage",
+   "Effect": "Allow",
+   "Principal": {
+    "AWS": "arn:aws:iam::<project>:role/<parent-role>"
+   },
+   "Action": [
+    "kms:Decrypt",
+    "kms:GenerateDataKey"
+   ],
+   "Resource": "*",
+   "Condition": {
+    "StringEqualsIgnoreCase": {
+     "kms:RecipientAttestation:PCR0": "0cfbaab0f70eb0d20254f17c06cb1aa19848cbd81b11c0c91bd59b79ce694617775f568ce8a72e9be7259152352c695d"
+    }
+   }
+  }
+ ]
+}

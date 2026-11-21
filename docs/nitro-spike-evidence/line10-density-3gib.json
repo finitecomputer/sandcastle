@@ -1,0 +1,81 @@
+{
+  "cpu_overcommit": true,
+  "cpu_pool": "7",
+  "drives_each": 4,
+  "launched": [
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 632.099638,
+      "pool_free_bytes": "24337448960",
+      "pool_in_use_bytes": "3579838464",
+      "sandbox": 1,
+      "slots_in_use": "1"
+    },
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 642.389136,
+      "pool_free_bytes": "21030240256",
+      "pool_in_use_bytes": "6887047168",
+      "sandbox": 2,
+      "slots_in_use": "2"
+    },
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 660.045769,
+      "pool_free_bytes": "17723031552",
+      "pool_in_use_bytes": "10194255872",
+      "sandbox": 3,
+      "slots_in_use": "3"
+    },
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 652.3770850000001,
+      "pool_free_bytes": "14415822848",
+      "pool_in_use_bytes": "13501464576",
+      "sandbox": 4,
+      "slots_in_use": "4"
+    },
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 625.0751879999999,
+      "pool_free_bytes": "11108614144",
+      "pool_in_use_bytes": "16808673280",
+      "sandbox": 5,
+      "slots_in_use": "5"
+    },
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 653.5769620000001,
+      "pool_free_bytes": "7801405440",
+      "pool_in_use_bytes": "20115881984",
+      "sandbox": 6,
+      "slots_in_use": "6"
+    },
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 643.586961,
+      "pool_free_bytes": "4494196736",
+      "pool_in_use_bytes": "23423090688",
+      "sandbox": 7,
+      "slots_in_use": "7"
+    },
+    {
+      "expected_pool_mib": 3154,
+      "launch_ms": 649.734877,
+      "pool_free_bytes": "1186988032",
+      "pool_in_use_bytes": "26730299392",
+      "sandbox": 8,
+      "slots_in_use": "8"
+    }
+  ],
+  "memory_mib": 3072,
+  "pool_in_use_before_bytes": "272629760",
+  "pool_total_bytes": "27917287424",
+  "refused": {
+    "error": "2026-11-21T00:35:38.734576471 [anonymous-instance:main] RunWithoutApiError error: Failed to build MicroVM from Json: Could not Start MicroVM from one single json: Enclave builder error: Enclave VM error: Failed to allocate CMA memory: Cannot create mmap region: Out of memory (os error 12)",
+    "sandbox": 9
+  },
+  "scenario": "density",
+  "slots": "20",
+  "vcpus_each": 2
+}

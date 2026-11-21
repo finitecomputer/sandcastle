@@ -134,6 +134,52 @@ pub fn attestation_document(response: &[u8]) -> Result<&[u8], NsmError> {
     }
 }
 
+/// `_IOWR(NSM_MAGIC = 0x0A, 0, struct nsm_raw)`, 32 bytes.
+#[cfg(target_os = "linux")]
+const NSM_IOCTL_RAW: libc::c_ulong = 0xC020_0A00;
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct NsmIovec {
+    addr: u64,
+    len: u64,
+}
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct NsmRaw {
+    request: NsmIovec,
+    response: NsmIovec,
+}
+
+#[cfg(target_os = "linux")]
+const _: () = assert!(std::mem::size_of::<NsmRaw>() == 32);
+#[cfg(target_os = "linux")]
+const _: () = assert!(NSM_IOCTL_RAW == (3 << 30) | (32 << 16) | (0x0A << 8));
+
+/// Asks `/dev/nsm` for an attestation document carrying `nonce` and
+/// `public_key`: the document, or why not.
+#[cfg(target_os = "linux")]
+pub fn attest(nonce: Option<&[u8]>, public_key: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    use std::os::fd::AsRawFd;
+    let request = attestation_request(None, nonce, public_key);
+    let mut response = vec![0u8; RESPONSE_BYTES_MAX];
+    let mut raw = NsmRaw {
+        request: NsmIovec { addr: request.as_ptr() as u64, len: request.len() as u64 },
+        response: NsmIovec { addr: response.as_mut_ptr() as u64, len: response.len() as u64 },
+    };
+    let file = std::fs::OpenOptions::new().read(true).write(true).open("/dev/nsm").map_err(|e| format!("/dev/nsm: {e}"))?;
+    // SAFETY: NSM_IOCTL_RAW with a valid nsm_raw whose buffers outlive
+    // the call; the driver writes the answer's length back into it.
+    let r = unsafe { libc::ioctl(file.as_raw_fd(), NSM_IOCTL_RAW as _, &mut raw as *mut NsmRaw) };
+    if r != 0 {
+        return Err(format!("the NSM's ioctl: {}", std::io::Error::last_os_error()));
+    }
+    let len = raw.response.len as usize;
+    assert!(len <= response.len(), "the driver answers within the buffer it was given");
+    attestation_document(&response[..len]).map(<[u8]>::to_vec).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

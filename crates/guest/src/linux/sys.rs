@@ -188,3 +188,58 @@ pub fn sethostname(name: &str) -> io::Result<()> {
     // SAFETY: a borrowed buffer and its length.
     check(unsafe { libc::sethostname(name.as_ptr() as *const libc::c_char, name.len()) })
 }
+
+/// The argument the init runs again with once it has left the initrd's
+/// root, so it does so once.
+pub const MOVED_ARG: &str = "sandcastle.moved-off-rootfs";
+
+/// `statfs` magic numbers: the kernel's rootfs is a ramfs or a tmpfs.
+const RAMFS_MAGIC: i64 = 0x8584_58f6;
+const TMPFS_MAGIC: i64 = 0x0102_1994;
+
+/// Whether the init's root is the kernel's own rootfs (an initrd's),
+/// not a disk (krun's boot disk is ext4).
+pub fn booted_from_initrd() -> bool {
+    // SAFETY: statfs writes the struct it is given.
+    let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+    let root = cstr("/").expect("a path");
+    if unsafe { libc::statfs(root.as_ptr(), &mut st) } != 0 {
+        return false;
+    }
+    let magic = st.f_type as i64;
+    magic == RAMFS_MAGIC || magic == TMPFS_MAGIC
+}
+
+/// `switch_root`'s move: a tmpfs mounted at `/newroot` gets this init
+/// and the directories it mounts on, is moved over `/`, becomes the
+/// root, and the init runs again from it (still PID 1). Returns only on
+/// failure.
+pub fn leave_initrd_root() -> io::Error {
+    let step = || -> io::Result<()> {
+        mkdir_p("/newroot")?;
+        let (src, dst, fs) = (cstr("tmpfs")?, cstr("/newroot")?, cstr("tmpfs")?);
+        let mode = cstr("mode=0755")?;
+        // SAFETY: NUL-terminated strings.
+        check(unsafe { libc::mount(src.as_ptr(), dst.as_ptr(), fs.as_ptr(), 0, mode.as_ptr() as *const libc::c_void) })?;
+        for d in ["dev", "proc", "sys", "run", "tmp"] {
+            mkdir_p(&format!("/newroot/{d}"))?;
+        }
+        std::fs::copy("/init", "/newroot/init")?;
+        let (dot, slash) = (cstr(".")?, cstr("/")?);
+        check(unsafe { libc::chdir(dst.as_ptr()) })?;
+        // SAFETY: MS_MOVE of the tmpfs onto /, then chroot into it.
+        check(unsafe { libc::mount(dot.as_ptr(), slash.as_ptr(), std::ptr::null(), libc::MS_MOVE, std::ptr::null()) })?;
+        check(unsafe { libc::chroot(dot.as_ptr()) })?;
+        check(unsafe { libc::chdir(slash.as_ptr()) })?;
+        Ok(())
+    };
+    if let Err(e) = step() {
+        return e;
+    }
+    let init = std::ffi::CString::new("/init").expect("a path");
+    let moved = std::ffi::CString::new(MOVED_ARG).expect("an argument");
+    let argv = [init.as_ptr(), moved.as_ptr(), std::ptr::null()];
+    // SAFETY: execv with NUL-terminated strings and a null-ended array.
+    unsafe { libc::execv(init.as_ptr(), argv.as_ptr()) };
+    io::Error::last_os_error()
+}

@@ -152,6 +152,18 @@ impl Attested {
     }
 }
 
+/// Reads a document's fields without checking its chain, signature or
+/// age: for a guest reading its own NSM's answer, which comes from the
+/// hypervisor's device in the guest, not over anything the parent
+/// carries. Its time is how a confidential guest, which has no clock of
+/// its own, learns the time without asking the parent. Anyone else
+/// verifies (`verify`, `verify_issued`).
+pub fn read_unverified(document: &[u8]) -> Result<Attested, AttestError> {
+    let envelope = document::envelope(document)?;
+    let payload = document::payload(envelope.payload)?;
+    Ok(payload.into_attested())
+}
+
 /// Verifies a document whose nonce must be `expected`: the caller's own,
 /// issued and kept by it.
 pub fn verify(trust: &Trust, document: &[u8], expected: &[u8], now_ms: u64) -> Result<Attested, AttestError> {

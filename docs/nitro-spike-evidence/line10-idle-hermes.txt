@@ -1,0 +1,38 @@
+== log
+held /run/nitro-spike/held (ready at 680 ms)
+guest: nitro: started
+guest: nitro: time 1795220852379
+guest: nitro: key {"plain":true}
+guest: nitro: mounted {"dir":"/opt/data","fpac":"mounted","misses":3,"ms":800.90226,"pack_waits":1,"waited_at":[18446744073709551615]}
+guest: /package/admin/s6-overlay/libexec/preinit: info: container permissions: uid=0 (root), euid=0, gid=0 (root), egid=0
+guest: /package/admin/s6-overlay/libexec/preinit: info: /run permissions: uid=0 (root), gid=0 (root), perms=oxorgxgruxuwur
+guest: s6-rc: info: service s6rc-oneshot-runner: starting
+guest: s6-rc: info: service s6rc-oneshot-runner successfully started
+guest: s6-rc: info: service fix-attrs: starting
+guest: s6-rc: info: service fix-attrs successfully started
+guest: s6-rc: info: service legacy-cont-init: starting
+guest: cont-init: info: running /etc/cont-init.d/01-hermes-setup
+guest: [stage2] Generated API_SERVER_KEY for the loopback gateway api_server
+== idle
+{
+  "code": 2,
+  "stderr": "awk: 1: unexpected character '\\'\n",
+  "stdout": "MemTotal:        2982588 kB\nMemFree:         2429772 kB\nMemAvailable:    2529848 kB\nBuffers:           25268 kB\nCached:           200784 kB\nSwapCached:            0 kB\n\n  RSS COMMAND\n244172 hermes\n12792 fpac\n 2884 ps\n 1552 sh\n 1548 rc.init\n 1520 sleep\n 1252 head\n 1248 sleep\n  148 s6-log\n  104 s6-svscan\n  104 s6-svscan\n\n"
+}
+== guest log tail
+guest: → gateway is now running under s6 supervision (auto-restart on crash,
+guest:   dashboard supervised alongside if HERMES_DASHBOARD is set).
+guest:   This is the recommended setup for the s6 container image — the
+guest:   gateway will keep running even if it crashes.
+guest:   Use `--no-supervise` (or HERMES_GATEWAY_NO_SUPERVISE=1) to opt out
+guest:   and get the pre-s6 foreground behavior instead.
+guest: ┌─────────────────────────────────────────────────────────┐
+guest: │           ☤ Hermes Gateway Starting...                 │
+guest: ├─────────────────────────────────────────────────────────┤
+guest: │  Messaging platforms + cron scheduler                    │
+guest: │  Press Ctrl+C to stop                                   │
+guest: └─────────────────────────────────────────────────────────┘
+guest: 
+guest: 2026-11-21 00:27:39,759 WARNING gateway.lifecycle_ledger: Previous gateway life (pid=149, started_at=2026-11-21T00:27:04.341597+00:00) exited UNCLEANLY (no exit path ran — SIGKILL / OOM / VM death, or a process kill issued by the agent or one of its descendants, e.g. a pkill/taskkill of the host interpreter image; see #113667). last_heartbeat_at=2026-11-21T00:27:05.194807+00:00 last_mem={'rss_kib': 181384, 'mem_total_kib': 2982588, 'mem_available_kib': 2473372, 'swap_used_kib': 0} suspected_oom=False
+guest: 2026-11-21 00:27:41,720 WARNING agent.model_metadata: Could not determine context length for model 'stand-in' (base_url=http://model.example.com/v1) — falling back to 256,000 tokens. Set model.context_length in config.yaml to override.
+done
