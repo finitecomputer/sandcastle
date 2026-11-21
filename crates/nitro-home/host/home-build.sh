@@ -20,10 +20,13 @@ OUT=${OUT:-$HOME/home-build/out}
 SRC=${SRC:-$HOME/home-build/src}
 here=$(dirname "$(realpath "$0")")
 
-# The pins. celld: the fork's selfhost line (fragment's docs/self-host.md);
+# The pins. celld: the fork's selfhost line (fragment's docs/self-host.md)
+# with two drafts merged (branch nitro/home-celld): nitro/preloaded-images
+# (a deploy saves no image named by its content key) and lane A's
+# nitro/keep-computers (a restart that asks keeps the computers running);
 # macrofiche: its main; fragment: the tree given (its sha recorded).
 CELLD_REPO=https://github.com/futurepaul/celld
-CELLD_SHA=da094d8c9d1989b137b1e051aef32814fa94b38d
+CELLD_SHA=d69c999c260c5a70ac5462da2be975471e8bd685
 MACROFICHE_REPO=https://github.com/futurepaul/macrofiche
 MACROFICHE_SHA=a18dc98e9e3abbec769344772edd72e933c396d6
 # sandcastle-bridge, the home's half of the container engine's vsock bridge

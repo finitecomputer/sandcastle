@@ -28,7 +28,8 @@
 #
 # Any service that exits takes the home down (the parent's service starts
 # it again); SIGTERM stops it gracefully: celld first (its last data
-# durable in the bucket), then the rest, the disk closed last.
+# durable in the bucket, its computers kept running for the next start),
+# then the rest, the disk closed last.
 set -euo pipefail
 say() { echo "home: $*"; }
 # ms since t0, set once the clock is (before it, the clock reads 1970)
@@ -96,8 +97,18 @@ say "disk mounted (new=$new)"
 
 pids=()
 stop_all() {
-    # celld first: its handoff makes the last write durable in the bucket
-    if [ -n "${celld_pid:-}" ]; then kill -TERM "$celld_pid" 2>/dev/null || true; wait "$celld_pid" 2>/dev/null || true; fi
+    # celld first: its handoff makes the last write durable in the bucket.
+    # With an engine, it is asked to keep its computers running for the
+    # next start of this home, which adopts them (celld's
+    # `containers=keep`); SIGTERM, which reaps them, only if that fails.
+    if [ -n "${celld_pid:-}" ]; then
+        if [ "${engine:-none}" != none ] && curl -sf -m 5 -X POST 'http://127.0.0.1:8081/shutdown?handoff=preserve&containers=keep' > /dev/null; then
+            say "celld stopping, its computers kept"
+        else
+            kill -TERM "$celld_pid" 2>/dev/null || true
+        fi
+        wait "$celld_pid" 2>/dev/null || true
+    fi
     for p in "${pids[@]}"; do kill -TERM "$p" 2>/dev/null || true; done
     for p in "${pids[@]}"; do wait "$p" 2>/dev/null || true; done
     [ -n "${bao_pid:-}" ] && kill -TERM "$bao_pid" 2>/dev/null || true

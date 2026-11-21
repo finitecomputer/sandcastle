@@ -228,6 +228,7 @@ virtual authenticator (CTAP2, user verification).
 | **A wake:** the computer asleep, a message sent, to the reply on the page | **8.1 s**. The cell's `start` event: VM up 1.0 s, data restored from its save (2.7 MB) at 1.3 s, Hermes heard at 1.75 s, its turn begun at 2.9 s |
 | Settings → Restart computer (save, new VM, restore) | Awake again in 5.1 s; the file kept |
 | The home restarted with the computer awake | the platform answering in 11.0 s; the next message woke a new VM ("up 0 min") with the file, 7.1 s from send to reply |
+| The same, since its stop keeps the computers (celld's `containers=keep`, lane A's) | the platform answering in 10.7 s; a file written 6 s before the restart read back by the **same VM** (its boot time unchanged, "up 7 min"), 18 s from send to reply, the cell's wake and its adoption of the computer included |
 
 ## What the parent can still see or do
 
@@ -254,7 +255,7 @@ Each item is with the design PR that closes it
 | 11 | **The engine's egress proxy on the parent reads every intercepted request in plaintext**: the computer's calls to the platform (its turns, its chats' records, the model route) and its saves and restores (`backups.sandbox.internal`, the whole of its `/data`). It then relays them to the home over vsock | PR 8, egress and its intercepts inside the boundary (TLS to the home, ended in the home) |
 | 12 | **The engine can run any command in a computer** (exec over vsock), and picks its image and environment | PR 6, the attested control channel |
 | 13 | The computer's scratch disk is plain on the parent; its `/data` lives in its saves in the bucket, unsealed | PR 7 (scratch), and FPAC's sealed disk in place of the saves (PR 5) |
-| 14 | A home restart reaps its computers without a final save ("changes made in the 1 minute before it stopped weren't kept") | Not a leak: the home's stop could sleep its computers first |
+| 14 | ~~A home restart reaps its computers without a final save~~ | **Closed** 2026-11-21: the home's stop asks celld to keep its computers running (`POST /shutdown?handoff=preserve&containers=keep`, lane A's celld change), and the next start adopts them. A turn in flight at the stop still loses its model call: its retries fail until its cell is adopted, which waits for the cell to be touched |
 
 Outside the parent:
 
