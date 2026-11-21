@@ -1,7 +1,8 @@
 //! The runner: one process per VM. It binds the VM's sockets, builds the
 //! VMM, answers the guest's lifecycle channel and its own control socket
 //! on two threads, and hands the main thread to libkrun, which ends the
-//! process when the guest powers off.
+//! process when the guest powers off. A Nitro Sandbox's runner instead
+//! starts Firecracker as its child and ends when it does (`nitro`).
 //!
 //! What it reports goes to stdout as JSON lines, one event each, so its
 //! supervisor (the spike's driver, later sandcastle's node) reads one
@@ -93,11 +94,16 @@ fn bind(path: &Path) -> Result<UnixListener, RunError> {
 pub fn run(config_path: &Path) -> Result<std::convert::Infallible, RunError> {
     let t0 = Instant::now();
     let config = read_config(config_path)?;
-    if config.seccomp.is_some() {
+    // libkrun's allowlist; a Nitro Sandbox's Firecracker installs its own
+    // (its child would inherit this one, which is libkrun's).
+    if config.seccomp.is_some() && config.nitro.is_none() {
         super::seccomp::install(config.seccomp).map_err(io("the runner's seccomp filter"))?;
     }
     let events_file = OpenOptions::new().create(true).append(true).open(config.run_dir.join(paths::EVENTS)).ok();
     let events = Events { t0, out: Arc::new(Mutex::new((std::io::stdout(), events_file))), run_dir: config.run_dir.clone() };
+    if let Some(nitro) = config.nitro.clone() {
+        return run_nitro(config, nitro, events, t0);
+    }
 
     // libkrun binds the agent socket itself (it listens there for the
     // host); a stale one from a crashed run would make that fail.
@@ -132,7 +138,7 @@ pub fn run(config_path: &Path) -> Result<std::convert::Infallible, RunError> {
         let (lifecycle, events, krun) = (lifecycle.clone(), events.clone(), krun.clone());
         std::thread::Builder::new()
             .name("control".into())
-            .spawn(move || serve_control(control_listener, &lifecycle, &events, &krun, &handle))
+            .spawn(move || serve_control(control_listener, &lifecycle, &events, Some((&krun, &handle))))
             .map_err(io("spawning the control thread"))?;
     }
     {
@@ -149,6 +155,55 @@ pub fn run(config_path: &Path) -> Result<std::convert::Infallible, RunError> {
     std::mem::forget(console);
     std::mem::forget(null);
     krun.run(vmm)
+}
+
+/// A Nitro Sandbox's run (docs/nitro.md): the same sockets and threads as
+/// libkrun's, Firecracker as the child that is the VM, and the runner's
+/// end when Firecracker's comes.
+fn run_nitro(config: VmConfig, nitro: crate::config::Nitro, events: Events, t0: Instant) -> Result<std::convert::Infallible, RunError> {
+    let lifecycle_listener = bind(&config.sock(paths::NITRO_LIFECYCLE_SOCK))?;
+    let agent_listener = bind(&config.sock(paths::AGENT_SOCK))?;
+    let control_listener = bind(&config.sock(paths::CONTROL_SOCK))?;
+    let vsock = config.sock(paths::NITRO_VSOCK);
+    if vsock.exists() {
+        std::fs::remove_file(&vsock).map_err(io("removing the stale vsock"))?;
+    }
+    let mut child = super::nitro::spawn(&config, &nitro, &config.sock(paths::CONSOLE_LOG)).map_err(io("starting Firecracker"))?;
+    let lifecycle = Arc::new(Mutex::new(Lifecycle::new()));
+    lifecycle.lock().expect("not yet shared").step(Event::Launched).expect("a new lifecycle launches");
+    events.emit(json!({"event": "launched", "id": config.id, "vmm": "nitro", "build_us": t0.elapsed().as_micros() as u64}));
+    {
+        let (lifecycle, events, start) = (lifecycle.clone(), events.clone(), config.start.clone());
+        std::thread::Builder::new()
+            .name("lifecycle".into())
+            .spawn(move || serve_lifecycle(lifecycle_listener, &lifecycle, &events, &start))
+            .map_err(io("spawning the lifecycle thread"))?;
+    }
+    std::thread::Builder::new()
+        .name("agent".into())
+        .spawn(move || super::nitro::serve_agent(agent_listener, vsock))
+        .map_err(io("spawning the agent relay"))?;
+    {
+        let (lifecycle, events) = (lifecycle.clone(), events.clone());
+        std::thread::Builder::new()
+            .name("control".into())
+            .spawn(move || serve_control(control_listener, &lifecycle, &events, None))
+            .map_err(io("spawning the control thread"))?;
+    }
+    {
+        let (lifecycle, events) = (lifecycle.clone(), events.clone());
+        std::thread::Builder::new()
+            .name("boot-watchdog".into())
+            .spawn(move || boot_watchdog(&lifecycle, &events))
+            .map_err(io("spawning the boot watchdog"))?;
+    }
+    if matches!(config.net, crate::config::Net::Tap { .. }) {
+        super::forward::start(&config.run_dir).map_err(io("starting the forwarder"))?;
+    }
+    let status = child.wait().map_err(io("waiting for Firecracker"))?;
+    use std::os::unix::process::ExitStatusExt;
+    events.emit(json!({"event": "vmm_exited", "code": status.code(), "signal": status.signal()}));
+    std::process::exit(status.code().unwrap_or(1))
 }
 
 /// A guest that has not said ready within `BOOT_MS_MAX` has failed: the
@@ -284,14 +339,23 @@ fn lifecycle_session(
     }
 }
 
-fn serve_control(listener: UnixListener, lifecycle: &Mutex<Lifecycle>, events: &Events, krun: &Krun, handle: &VmmHandle) {
+/// What a VM without pause says to a pause or resume (a Nitro Sandbox).
+const NO_PAUSE: &str = "this VM does not pause (a Nitro Sandbox)";
+
+fn serve_control(listener: UnixListener, lifecycle: &Mutex<Lifecycle>, events: &Events, vmm: Option<(&Krun, &VmmHandle)>) {
     // Unbounded by design: the control socket serves for the VM's life,
     // one request per connection.
     for conn in listener.incoming() {
         let Ok(stream) = conn else { continue };
         let reply = match control_request(&stream) {
-            Ok(ControlRequest::Pause) => pause(lifecycle, events, krun, handle),
-            Ok(ControlRequest::Resume) => resume(lifecycle, events, krun, handle),
+            Ok(ControlRequest::Pause) => match vmm {
+                Some((krun, handle)) => pause(lifecycle, events, krun, handle),
+                None => ControlReply::Error { message: NO_PAUSE.into() },
+            },
+            Ok(ControlRequest::Resume) => match vmm {
+                Some((krun, handle)) => resume(lifecycle, events, krun, handle),
+                None => ControlReply::Error { message: NO_PAUSE.into() },
+            },
             Ok(ControlRequest::Kill) => {
                 events.emit(json!({"event": "killed"}));
                 // The runner is its PID namespace's PID 1, which ignores a

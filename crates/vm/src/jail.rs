@@ -26,7 +26,12 @@ pub mod inside {
     pub const LIB: &str = "/krun/lib";
     pub const RUNNER: &str = "/krun/bin/sandcastle-vm";
     pub const CONFIG: &str = "/config.json";
+    /// A Nitro Sandbox's Firecracker, kernel and initrd (docs/nitro.md).
+    pub const NITRO: &str = "/nitro";
 }
+
+/// The Nitro Enclaves driver's device, a Nitro Sandbox's in place of KVM.
+pub const NITRO_DEVICE: &str = "/dev/nitro_enclaves";
 
 /// The seccomp filter's default: log what the allowlist misses (to build
 /// the list), or kill the process that calls it.
@@ -52,6 +57,10 @@ pub struct Settings {
     pub uid_count: u32,
     /// The group that may open `/dev/kvm`.
     pub kvm_gid: u32,
+    /// The group that may open `/dev/nitro_enclaves`, on a Nitro parent
+    /// (docs/nitro.md); a node without it runs no Nitro Sandbox.
+    #[serde(default)]
+    pub nitro_gid: Option<u32>,
     /// Who gets the VM's files back when it ends (the node's user).
     pub owner_uid: u32,
     pub owner_gid: u32,
@@ -228,6 +237,7 @@ pub fn plan(config: &VmConfig, settings: &Settings, uid: u32) -> Result<Plan, Ja
             DiskRole::Scratch => "scratch.ext4",
             DiskRole::Data => "data.ext4",
             DiskRole::Target => "target.ext4",
+            DiskRole::Hashes => "hashes.verity",
         };
         let target = Path::new(inside::DISKS).join(name);
         let kind = if d.role.read_only() { MountKind::BindRo { exec: false } } else { MountKind::BindRw };
@@ -246,16 +256,47 @@ pub fn plan(config: &VmConfig, settings: &Settings, uid: u32) -> Result<Plan, Ja
     };
     let krun_name = config.libkrun.file_name().ok_or(JailError::Path(config.libkrun.clone()))?;
     let krunfw_name = config.libkrunfw.file_name().ok_or(JailError::Path(config.libkrunfw.clone()))?;
-    for name in [krun_name, krunfw_name] {
-        let name = name.to_str().ok_or(JailError::Path(config.libkrun.clone()))?;
-        let source = lib(name)?;
-        mounts.push(Mount {
-            source,
-            target: Path::new(inside::LIB).join(name),
-            kind: MountKind::BindRo { exec: true },
-            file: true,
-        });
-    }
+    // A Nitro Sandbox's VMM is Firecracker, not libkrun: its three files
+    // from the lib dir, and its device. libkrun's are never bound then.
+    let mut inside_nitro = None;
+    let device = match &config.nitro {
+        None => {
+            for name in [krun_name, krunfw_name] {
+                let name = name.to_str().ok_or(JailError::Path(config.libkrun.clone()))?;
+                let source = lib(name)?;
+                mounts.push(Mount {
+                    source,
+                    target: Path::new(inside::LIB).join(name),
+                    kind: MountKind::BindRo { exec: true },
+                    file: true,
+                });
+            }
+            "/dev/kvm"
+        }
+        Some(n) => {
+            if settings.nitro_gid.is_none() {
+                return Err(JailError::Settings("a Nitro Sandbox on a node with no nitro_gid"));
+            }
+            let mut moved = n.clone();
+            for (source, name, exec) in [(&n.firecracker, "firecracker", true), (&n.kernel, "kernel", false), (&n.initrd, "initrd", false)] {
+                // The initrd the engine makes from its guest lies in its
+                // state; Firecracker and the kernel are the node's install.
+                let from_lib = source.parent() == Some(settings.lib_dir.as_path());
+                if !from_lib && !(name == "initrd" && under(source, root)) {
+                    return Err(JailError::Config(format!("nitro's {name} must come from the lib dir")));
+                }
+                let target = Path::new(inside::NITRO).join(name);
+                mounts.push(Mount { source: source.clone(), target: target.clone(), kind: MountKind::BindRo { exec }, file: true });
+                match name {
+                    "firecracker" => moved.firecracker = target,
+                    "kernel" => moved.kernel = target,
+                    _ => moved.initrd = target,
+                }
+            }
+            inside_nitro = Some(moved);
+            NITRO_DEVICE
+        }
+    };
     mounts.push(Mount {
         source: settings.runner.clone(),
         target: inside::RUNNER.into(),
@@ -269,7 +310,7 @@ pub fn plan(config: &VmConfig, settings: &Settings, uid: u32) -> Result<Plan, Ja
         mounts.push(Mount { source: f.clone(), target: f.clone(), kind: MountKind::BindRo { exec: true }, file: true });
     }
     mounts.push(Mount { source: config.run_dir.clone(), target: inside::RUN_DIR.into(), kind: MountKind::BindRw, file: false });
-    mounts.push(Mount { source: "/dev/kvm".into(), target: "/dev/kvm".into(), kind: MountKind::Device, file: true });
+    mounts.push(Mount { source: device.into(), target: device.into(), kind: MountKind::Device, file: true });
     mounts.push(Mount { source: "/dev/null".into(), target: "/dev/null".into(), kind: MountKind::Device, file: true });
     mounts.push(Mount { source: "/dev/urandom".into(), target: "/dev/urandom".into(), kind: MountKind::Device, file: true });
     let tap = match &config.net {
@@ -285,13 +326,14 @@ pub fn plan(config: &VmConfig, settings: &Settings, uid: u32) -> Result<Plan, Ja
     inside_config.libkrun = Path::new(inside::LIB).join(krun_name);
     inside_config.libkrunfw = Path::new(inside::LIB).join(krunfw_name);
     inside_config.seccomp = Some(settings.seccomp);
+    inside_config.nitro = inside_nitro;
     inside_config.validate().map_err(|e| JailError::Config(e.to_string()))?;
 
     let nft = tap.as_ref().map(|t| nft_ruleset(&t.name));
     let plan = Plan {
         uid,
         gid: uid,
-        groups: vec![settings.kvm_gid],
+        groups: vec![if config.nitro.is_some() { settings.nitro_gid.expect("checked above") } else { settings.kvm_gid }],
         mounts,
         owned,
         links: settings.links.clone(),
@@ -322,7 +364,7 @@ fn check(plan: &Plan, settings: &Settings) -> Result<(), JailError> {
                 }
             }
             MountKind::Device => {
-                if !["/dev/kvm", "/dev/null", "/dev/urandom", "/dev/net/tun"].contains(&m.source.to_str().unwrap_or("")) {
+                if !["/dev/kvm", NITRO_DEVICE, "/dev/null", "/dev/urandom", "/dev/net/tun"].contains(&m.source.to_str().unwrap_or("")) {
                     return Err(JailError::Config(format!("device {} not allowed", m.source.display())));
                 }
             }
@@ -383,6 +425,7 @@ mod tests {
             uid_base: 300_000,
             uid_count: 64,
             kvm_gid: 994,
+            nitro_gid: None,
             owner_uid: 1000,
             owner_gid: 1000,
             system_libs: vec!["/usr/lib/x86_64-linux-gnu".into(), "/usr/lib64".into()],
@@ -390,6 +433,48 @@ mod tests {
             links: debian_links(),
             seccomp: SeccompMode::Enforce,
         }
+    }
+
+    // Goal: a Nitro Sandbox's jail holds Firecracker, its kernel and
+    // initrd from the lib dir and the Nitro device, never libkrun or
+    // /dev/kvm; its uid's group is the node's Nitro group; the runner reads
+    // the jail's own paths. A node with no Nitro group, or a file from
+    // outside the lib dir, is refused.
+    #[test]
+    fn a_nitro_sandboxs_jail() {
+        let mut c = config();
+        c.disks[0].role = DiskRole::Hashes;
+        c.nitro = crate::config::tests::nitro_config().nitro;
+        let n = c.nitro.as_mut().unwrap();
+        n.firecracker = "/opt/krun/lib/firecracker".into();
+        n.kernel = "/opt/krun/lib/guest-kernel".into();
+        n.initrd = "/opt/krun/lib/guest.initrd".into();
+        let mut s = settings();
+        s.nitro_gid = Some(993);
+        let p = plan(&c, &s, 300_001).unwrap();
+        let targets: Vec<&str> = p.mounts.iter().map(|m| m.target.to_str().unwrap()).collect();
+        for t in ["/nitro/firecracker", "/nitro/kernel", "/nitro/initrd", NITRO_DEVICE, "/disks/hashes.verity"] {
+            assert!(targets.contains(&t), "{t}");
+        }
+        assert!(!targets.iter().any(|t| t.starts_with(inside::LIB) || *t == "/dev/kvm"));
+        assert_eq!(p.groups, vec![993]);
+        let inner = p.inside.nitro.as_ref().unwrap();
+        assert_eq!((inner.firecracker.to_str(), inner.kernel.to_str(), inner.initrd.to_str()), (Some("/nitro/firecracker"), Some("/nitro/kernel"), Some("/nitro/initrd")));
+        let fc = p.mounts.iter().find(|m| m.target == Path::new("/nitro/firecracker")).unwrap();
+        assert_eq!(fc.kind, MountKind::BindRo { exec: true });
+        let kernel = p.mounts.iter().find(|m| m.target == Path::new("/nitro/kernel")).unwrap();
+        assert_eq!(kernel.kind, MountKind::BindRo { exec: false });
+
+        assert!(matches!(plan(&c, &settings(), 300_001), Err(JailError::Settings(_))));
+        let mut outside = c.clone();
+        outside.nitro.as_mut().unwrap().kernel = "/srv/kernel".into();
+        assert!(matches!(plan(&outside, &s, 300_001), Err(JailError::Config(_))));
+        // The engine's own initrd, in its state, is allowed; a kernel there is not.
+        let mut made = c.clone();
+        made.nitro.as_mut().unwrap().initrd = "/var/krun/boot/guest-0123.initrd".into();
+        plan(&made, &s, 300_001).unwrap();
+        made.nitro.as_mut().unwrap().kernel = "/var/krun/boot/kernel".into();
+        assert!(matches!(plan(&made, &s, 300_001), Err(JailError::Config(_))));
     }
 
     // Goal: the jail's root links as the host's does (Arch's /lib64 is

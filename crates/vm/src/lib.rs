@@ -5,6 +5,7 @@
 
 pub mod client;
 pub mod config;
+pub mod firecracker;
 pub mod jail;
 pub mod lifecycle;
 #[cfg(target_os = "linux")]
@@ -24,4 +25,12 @@ pub mod paths {
     /// The entrypoint's output: the container's logs.
     pub const STDOUT_LOG: &str = "stdout.log";
     pub const STDERR_LOG: &str = "stderr.log";
+    /// A Nitro Sandbox's vsock, Firecracker's: the runner connects here
+    /// for the guest's agent, and the guest's dial to the host's port P
+    /// reaches `<it>_P`.
+    pub const NITRO_VSOCK: &str = "v.sock";
+    /// `NITRO_VSOCK` for the guest's lifecycle port (1025).
+    pub const NITRO_LIFECYCLE_SOCK: &str = "v.sock_1025";
+    /// Firecracker's configuration, which the runner writes.
+    pub const NITRO_CONFIG: &str = "firecracker.json";
 }
