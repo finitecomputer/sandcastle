@@ -242,6 +242,12 @@ this engine in Nitro mode, every sandbox confidential.
   build VM applying its five layers and ending, then each sandbox's start
   (ready in about 500 ms) and end.
 
+- `home-computers.md`: a home in a Nitro Sandbox of its own, on the same
+  parent, running its computers on this engine through the bridge:
+  Fragment's Hermes image (arm64) as a measured root, an agent made and
+  answering from a browser, its file kept across a restart, two home
+  restarts and a wake, and its screen through `ports.sock`.
+
 The run found three bugs, each fixed in the PR that owns it: the guest
 rebooted where Nitro's Firecracker ends only on a power-off (the guest),
 Firecracker's vsock dropped a host's close so a build's guest waited on
