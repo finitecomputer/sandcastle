@@ -135,8 +135,8 @@ fi
 # 8. The facts. No instance id, AMI id or address: they go into a public
 # repository.
 pool_line=$(dmesg | grep -m1 "nitro_enclaves: CMA pool" || true)
-token=$(curl -sS -m 2 -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60" || true)
-itype=$(curl -sS -m 2 -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/instance-type || true)
+# Amazon Linux's own reader of the instance metadata (amazon-ec2-utils).
+itype=$(ec2-metadata --instance-type 2>/dev/null | awk '{print $2}' || true)
 python3 -I - "$NE" "$pool_line" "$itype" "$RUST_TOOLCHAIN" <<'PY'
 import json, os, platform, subprocess, sys
 ne, pool_line, itype, rust = sys.argv[1:5]
