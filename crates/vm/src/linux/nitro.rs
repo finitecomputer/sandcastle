@@ -237,7 +237,9 @@ mod tests {
                 BufReader::new(&s).read_line(&mut line).unwrap();
                 assert_eq!(line, "CONNECT 1024\n");
                 s.write_all(answer.as_bytes()).unwrap();
-                if answer.ends_with('\n') {
+                // What follows an OK is the agent's. A refused relay has
+                // closed its end by now, so nothing follows a refusal.
+                if ok {
                     s.write_all(b"hello").unwrap();
                 }
             });
