@@ -151,10 +151,16 @@ engine=none
 case "$HOME_ENGINE" in
     none) ;;
     bridge)
-        mkdir -p /run/sandcastle
+        mkdir -p /run/sandcastle $STATE/sessions
+        # each computer is reached over its attested session alone (lane
+        # A's PR 6), claimed at its start against the PCR0s pinned here:
+        # one a line, kept on the encrypted disk, so a new image's pin is
+        # no reimage. A first boot pins nothing that starts: the bridge's
+        # log names the PCR0 it refused, and the operator pins it.
+        [ -f $STATE/pins ] || printf '%s\n' "# the PCR0 of each computer image this home runs, one a line" "$(printf '0%.0s' $(seq 96))" > $STATE/pins
         # celld's intercept socket, as celld names it for CELLD_NODE=home
         # (`intercepts-` and the first 6 hex of the node's SHA-256)
-        /usr/local/bin/sandcastle-bridge home --intercepts $STATE/celld/intercepts-$(printf %s home | sha256sum | cut -c1-6).sock > $LOG/bridge.log 2>&1 &
+        /usr/local/bin/sandcastle-bridge home --intercepts $STATE/celld/intercepts-$(printf %s home | sha256sum | cut -c1-6).sock --sessions $STATE/sessions --pins $STATE/pins > $LOG/bridge.log 2>&1 &
         pids+=($!)
         for _ in $(seq 100); do [ -S /run/sandcastle/engine.sock ] && break; sleep 0.05; done
         engine=krun:/run/sandcastle/engine.sock ;;

@@ -30,9 +30,10 @@ CELLD_SHA=2a159279faef1e48de01f73662f757426b9490df
 MACROFICHE_REPO=https://github.com/futurepaul/macrofiche
 MACROFICHE_SHA=a18dc98e9e3abbec769344772edd72e933c396d6
 # sandcastle-bridge, the home's half of the container engine's vsock bridge
-# (lane A's, sandcastle's nitro/vsock-bridge line), for the image's glibc.
+# (lane A's, sandcastle's nitro/attested-session line: each computer
+# reached over its attested session), for the image's glibc.
 BRIDGE_REPO=https://github.com/futurepaul/sandcastle
-BRIDGE_SHA=5427724
+BRIDGE_SHA=5dcb0f3
 OPENBAO_VERSION=2.7.2
 # openbao_2.7.2_linux_arm64.tar.gz in the release's checksums.txt, as
 # fragment's crates/devstack/src/openbao_release.rs pins it.
