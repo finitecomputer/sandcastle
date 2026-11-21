@@ -1,0 +1,16 @@
+# Line 9 bytecode check (docs/nitro-spike.md, 'Is Hermes compiling its Python'): every .py under /opt/hermes, its __pycache__ entry for Python 3.14 checked by the image's own python against the image mounted read-only on the parent (host/pyc-check.py).
+
+## The shipped image (upstream Hermes v0.23.2, as line 6 built it)
+python 3.14.9 magic 2b0e0d0a
+  13584  missing
+   9060  valid (time and size match)
+missing, by directory: [('opt/hermes/uv-cache', 9124), ('opt/hermes/tools', 1445), ('opt/hermes/hermes_cli', 882), ('opt/hermes/agent', 461), ('opt/hermes/gateway', 409), ('opt/hermes/plugins', 358), ('opt/hermes/scripts', 188), ('opt/hermes/evals', 168)]
+stale, first: []
+
+## The bytecode image (the same root after compileall --invalidation-mode unchecked-hash in a chroot)
+python 3.14.9 magic 2b0e0d0a
+  13562  hash-based, unchecked
+   9081  valid (time and size match)
+      1  missing
+missing, by directory: [('opt/hermes/uv-cache', 1)]
+stale, first: []

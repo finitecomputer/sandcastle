@@ -224,6 +224,8 @@ this backend loses (memory given back, pause).
 | `crates/nitro-spike/host/verity-image.sh` | An image's root as a raw ext4 disk with its verity tree, built to the same bytes each time; its table and root hash as JSON | Run (line 6) |
 | `crates/nitro-spike/host/nitro-entrypoint.sh` | The image's entrypoint: the clock, the key, FPAC's mount at Hermes' home, then Hermes | Run (lines 6 to 10) |
 | `crates/nitro-spike/host/teardown.sh` | Line 12: list everything tagged for the spike, or remove all of it or the types named | `list` and `delete s3-bucket` run |
+| `crates/nitro-spike/host/home-celld.py`, `home/` | The home study: celld's root and image, its Worker deployed to the fleet bucket, a home's lives (health, a restored object, warm reads, a write, the graceful stop) and memory, the smallest sandbox | Run (2026-11-21) |
+| `crates/nitro-spike/host/pyc-check.py`, `pyc-image.sh` | The bytecode study: every `.py`'s cache checked against its source, and the image rebuilt with unchecked-hash bytecode | Run (2026-11-21) |
 | `crates/nitro-spike/host/cold-reads.py`, `cold-entry.sh` | Line 9's cold-read study: one computer a sample on the plain disk, a cold, warm and cache-dropped `hermes chat` or a gateway's first reply, under the driver's study settings (`--mode direct`, `--root linear`, `--entrypoint-file`, `exec --stdin`) and the guest's sysfs ones | Run (line 9, 2026-11-21) |
 
 ### Dependencies
@@ -993,6 +995,159 @@ everything else no longer needed goes. `teardown.sh` gained `delete
 The parent has no public address while stopped. Everything left is
 tagged `project=nitro-spike` and in the inventory, with the bucket marked
 removed.
+
+### A home: celld in a sandbox of its own (2026-11-21)
+
+**Why.** celld isolates tenants hardly at all: its `docs/security.md` says
+it is not safe for hostile multi-tenant use, and one fleet runs one
+application. The candidate answer is to keep celld single-tenant and put
+the wall around it: one celld per organisation in a sandbox of its own (a
+"home"), that organisation's computers as sibling sandboxes. This
+measures what a home costs.
+
+**In plain words:** a home is small and quick. celld serves its health
+answer about 2.15 s after launch, and the first answer from an object an
+earlier life wrote comes 0.2 s later, restored from S3. It runs in a 256
+MiB sandbox. On an 8-vCPU parent the cap on sandboxes binds before
+memory does, at 35 homes, about $7.50 per awake home a month. An
+organisation that is one home and one awake 3 GiB computer costs about
+$37 a month, against $33 for the computer alone.
+
+**The setup.** celld 0.6.3 from the fork's `selfhost` line (b19f09d),
+built on the parent in 241 s, 64.8 MB, with upstream's prebuilt arm64 V8
+for its `v8` crate (`home-celld-build.txt`; the fork's own V8 build is
+x86_64 only). Its root is `debian:bookworm-slim` plus the binary, as
+celld's own release image is (`host/home/Dockerfile`): 178 MB, a 456 MiB
+image under dm-verity. The workload is celld alone (`host/home/home-
+entry.sh`): the clock from the NSM, then celld on `0.0.0.0:8080`, its
+internal listener on loopback. Its fleet bucket was a real S3 bucket in
+us-east-2, reached through the egress proxy as a spliced host. celld
+speaks S3 itself, so nothing here is modelled. The Worker is the
+smallest with one Durable Object (`host/home/worker`): GET reads a
+counter, POST adds one. The parent speaks to celld over the tap, as a
+front door would. A confidential sandbox, 2 vCPUs, 1 GiB unless stated.
+Harness: `host/home-celld.py`; evidence: `home-results.jsonl`,
+`home-celld-life.log`.
+
+| A home, ten lives, a new sandbox each | Median (range) |
+|---|---|
+| Launch to the entrypoint (boot) | 517 ms (511–520) |
+| Entrypoint to celld's health 200 (celld's start, of which its readiness gate waits 1,045 ms) | 1,629 ms (1,589–1,677) |
+| **Launch to health** | **2,150 ms** (2,108–2,202) |
+| Health to the first answer from the restored object (the restore) | 191 ms (163–218) |
+| **Launch to the restored object's answer** | **2,351 ms** (2,293–2,381) |
+| It read the last acknowledged write of the life before | 10 of 10 |
+| A warm read | 0.77 ms |
+| An acknowledged write (one S3 round trip, celld's single-node proof) | 76 ms (56–90) |
+| The graceful stop (SIGTERM to exit) | 15.5 s (15.4–15.6) |
+| ... of which until the data was durable | 103 ms (30–146) |
+| The stop with `CELLD_SHUTDOWN_TOTAL_MS=5000`, n = 3 | 3.5 s (3.50–3.61), the next life right |
+
+- **The stop's 15 s are bookkeeping, not data.** celld proves its cells
+  durable and publishes their snapshots within about 0.1 s of the SIGTERM.
+  Then a one-node fleet waits for its shared fleet sample to refresh
+  (every 5 s; two refreshes fail while it drains) before it releases its
+  drain token and exits. A shorter stop bound cuts the wait; every next
+  life still read the last acknowledged write.
+- **Readiness** waits about 1 s for the fleet to settle, even with one
+  node.
+
+**Memory** (celld's resident set in the guest, after the restored read
+and a write, then with 10 and 100 objects resident; `free` memory as the
+guest reports it):
+
+| Sandbox | 1 object | 10 objects | 100 objects | Available with 100 |
+|---|---|---|---|---|
+| 256 MiB (the guest sees 216 MiB) | 47 MiB | 50 MiB | 80 MiB | 136 MiB |
+| 512 MiB (467 MiB) | 47 MiB | 50 MiB | 80 MiB | 383 MiB |
+| 1 GiB (969 MiB), n = 4 | 80–82 MiB | 82–84 MiB | 114–118 MiB | 779–786 MiB |
+
+The smallest of the three, **256 MiB, boots and serves 100 resident
+objects** (health 2.10 s, the restore right). celld sizes its caches from
+the memory it sees, so a larger sandbox holds more.
+
+**B, the real cell: not done.** Built cell bundles are at hand on the
+operator's machine (for one, `cell/build` of 2026-11-19 at `d8428bcc8`,
+beside its dev-rendered `wrangler.local.jsonc`). But that config names
+nine secrets-store secrets, and the cell also needs the dev stack's vars,
+its AI and mail fakes and its front door's host routing. A fragment's
+first page also needs a fragment made through a signed-in API session.
+That is Fragment's dev stack rebuilt on the parent, more than the short
+look this allowed.
+
+**C, the arithmetic.** On `m8g.2xlarge` (8 vCPUs; line 10's 26 GiB pool,
+26,364 MiB free with 20 slots; 7 vCPUs in the CPU pool), each sandbox
+takes its memory, 2 MiB and 16 MiB per device (a home has three disks, a
+NIC and a vsock: 82 MiB):
+
+| | Pool each | Fit by memory | The cap: 5 sandboxes per pool vCPU | Per parent | Per awake month ($262.10 a parent) |
+|---|---|---|---|---|---|
+| A 256 MiB home | 338 MiB | 78 | 35 | **35** | **$7.49** |
+| A 512 MiB home | 594 MiB | 44 | 35 | 35 | $7.49 |
+| A 1 GiB home | 1,106 MiB | 23 | 35 | 23 | $11.40 |
+| An organisation: a 256 MiB home and an awake 3 GiB computer | 3,492 MiB | 7 | 17 | **7** | **$37.44** |
+| (line 10: a 3 GiB computer alone) | 3,154 MiB | 8 | 35 | 8 | $32.76 |
+
+A home must run with `cpu_overcommit` to fit at all (without it, 3
+two-vCPU sandboxes fill the CPU pool), so its key's policy names the
+overcommit launch's PCR0 (line 4). More than 20 homes needs the slots
+raised (40 is this parent's most), and slots take pool memory too: 20
+took 260 MiB.
+
+**D, what this setup does not protect.** The parent fetches the bucket's
+credentials from its own metadata service and hands them to the guest in
+its environment, so the parent holds the same keys as the home and can
+read or rewrite the fleet bucket directly. celld's bucket holds
+everything unsealed: the deployment, every object's SQLite pages and log,
+the ownership records and the fleet's peer secret. Anyone with the bucket
+credentials (the parent, the project's administrators, AWS) reads every
+tenant's state and controls the fleet. The parent also sees every request
+to the home in plaintext, since the front door speaks HTTP to it over the
+tap, and it can roll the bucket back or serve another one. Sealing
+celld's bucket is other people's work in progress. Here, only the home's
+memory is protected from the parent.
+
+### Is Hermes compiling its Python on every cold start? (2026-11-21)
+
+**Yes, but it is not where the time goes.** Upstream's image ships
+13,584 of Hermes' `.py` files with no bytecode at all, and its
+`PYTHONDONTWRITEBYTECODE=1` keeps Python from ever writing any. So each
+process compiles what it imports, every start. Giving the image valid
+bytecode saves about 0.2–0.6 s of the gateway's first reply, not the 5.3 s.
+
+- **Not our image build's doing.** `verity-image.sh` keeps every file's
+  time (its fixed time is the filesystem's own), and no bytecode file is
+  stale. The shipped image has 9,060 valid and 13,584 missing, among
+  them Hermes' own packages (`hermes_cli` 882, `agent` 461, `gateway`
+  409, `plugins` 358) (`line9-bytecode-check.txt`).
+- **At runtime** (`line9-bytecode-runtime.txt`): `import gateway.run`
+  compiles 550 of its 820 modules from source and takes 1,804 ms. With
+  bytecode it takes 470–486 ms. `hermes_cli.main`: 541 ms against 275.
+- **The fix, built** (`host/pyc-image.sh`): `compileall
+  --invalidation-mode unchecked-hash` by the image's own Python in a
+  chroot of the root, at image build, in 11 s: 22,643 bytecode files,
+  293 MB, the image 3,607 MiB to 3,829. One file is left without bytecode,
+  a doctest example that does not compile.
+- **Measured, the gateway's first reply, cold** (each image read into the
+  parent's cache before its block, since the two do not fit at once;
+  `line9-bytecode-samples.jsonl`):
+
+| | Shipped | With bytecode |
+|---|---|---|
+| Normal starts: median (range), n | 12.24 s (12.17–12.41), 5; and 12.18 s (12.05–14.23), 4, alternated | 12.03 s (12.03–12.09), 3; and 11.55 s (11.53–12.97), 3, alternated |
+| Starts that waited Hermes' 10 or 20 s | 3 of 8; 4 of 8 | 5 of 8; 5 of 8 |
+| The one-shot chat, cold, n = 4 | 13.86 s | 13.90 s |
+
+  The bytecode start runs about 0.2–0.4 s ahead from Hermes' s6 services
+  on. The one-shot chat shows no gain, and its cold run uses 15 s of CPU
+  with either image. The 10 s waits left only 6 normal bytecode starts of
+  16, under the 7 asked for.
+- **Where the gateway's 5.3 s go instead** (the normal starts' timeline,
+  shipped): Hermes' container setup to its s6 services, 1.2 s after the
+  mount; the wrapper `hermes gateway run` CLI, 2.0 s, until it hands the
+  gateway to s6; the supervised gateway's own start to its API listening,
+  3.5 s; then the first turn, 3.7 s. Two Python processes start in
+  series, and each one's work is mostly not compiling.
 
 ### Before line 1: blocked by the free plan (2026-11-20, resolved)
 

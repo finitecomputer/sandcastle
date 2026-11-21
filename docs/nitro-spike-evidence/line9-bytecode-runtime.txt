@@ -1,0 +1,39 @@
+# Line 9 bytecode at runtime, in a guest on the plain disk, confidential, dm-verity.
+
+## The shipped image: python3 -v counts, then imports timed, then with bytecode written once to a /tmp prefix
+57:# code object from /opt/hermes/gateway/run.py
+1113:# code object from /opt/hermes/gateway/run_status_filter.py
+1351:# code object from /opt/hermes/gateway/run_common.py
+1423:# code object from /opt/hermes/gateway/runtime_footer.py
+820
+550
+plain_ms 1804
+writing_to_prefix_ms
+from_prefix_ms 477
+from_prefix_ms 470
+from_prefix_ms 478
+pyc_files_written 820
+plain_hermes_cli.main 541 prefix_hermes_cli.main 275
+
+# (the first probe of the same: hermes_cli.main loads 338 modules from source files, 123 from bytecode; gateway.run 781 and 270)
+
+## The bytecode image, as printed (sys.flags abbreviated)
+code_objects 820 from_source 0
+# /opt/hermes/gateway/__pycache__/run.cpython-314.pyc matches /opt/hermes/gateway/run.py
+-rw-r--r--. 1 root root 328860 Nov 21 01:59 /opt/hermes/gateway/__pycache__/run.cpython-314.pyc
+sys.flags(... optimize=0, dont_write_bytecode=1 ...) None
+import_ms 478 486
+PYTHONDONTWRITEBYTECODE=1
+
+## The gateway's start, medians of the normal starts (ms from Firecracker's spawn; console stamps and Hermes' own log, the guest's clock tied to its NSM time line)
+step             shipped (n=5)  bytecode (n=3)
+mounted          1078           1108
+services         2297           1879
+out_of_sync      3719           3327
+supervised       4346           3965
+banner           5942           5582
+control_socket   6915           6601
+api_listening    7832           7557
+inbound          8425           8118
+warmed           9249           9005
+reply_ready      12100          11888

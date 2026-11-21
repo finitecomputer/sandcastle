@@ -5,6 +5,7 @@ go"), run on the parent as its build user:
   ./cold-reads.py chat <name> <samples> [--mode direct] [--root linear]
                   [--setting readahead|verity-prefetch|working-set]
   ./cold-reads.py gateway <name> <samples> [the same]
+                  [--image hermes-pyc]   # another image of ~/nitro/images
   ./cold-reads.py record chat|gateway   # the working set, once
   ./cold-reads.py trace <name>          # every read, once, by strace
 
@@ -113,7 +114,7 @@ PREFETCH = "s=$(date +%s%N); xargs -d '\\n' -P 16 -n 32 cat > /dev/null 2>&1; e=
 
 def hold(args, gateway):
     cmd = ["sudo", BIN, "hold", "--kernel", f"{HOME}/nitro/guest-kernel/out/Image", "--initrd", f"{HOME}/nitro/images/guest.initrd",
-           "--image-json", f"{HOME}/nitro/images/hermes.json", "--image-config", f"{HOME}/hermes-config.json",
+           "--image-json", f"{HOME}/nitro/images/{args[args.index('--image') + 1] if '--image' in args else 'hermes'}.json", "--image-config", f"{HOME}/hermes-config.json",
            "--kms-key", open(f"{COLD}/kms-key").read().strip(), "--mem-mib", "4096", "--scratch-gib", "24",
            "--store", f"{HOME}/nitro/store-plain-1gb", "--disk", "hermes", "--fpac-bench", f"{HOME}/fpac/target/release/fpac-bench",
            "--volume-gb", "40", "--object-ms", "23", "--put-bytes-per-s", "90000000",
@@ -164,7 +165,7 @@ def sample(kind, name, args, index, trace=False):
     kill_all()
     t0 = time.time()
     p = hold(args, kind == "gateway")
-    row = {"name": name, "kind": kind, "sample": index, "setting": setting, "mode": args[args.index("--mode") + 1] if "--mode" in args else "confidential", "root": args[args.index("--root") + 1] if "--root" in args else "verity"}
+    row = {"name": name, "kind": kind, "sample": index, "setting": setting, "image": args[args.index("--image") + 1] if "--image" in args else "hermes", "mode": args[args.index("--mode") + 1] if "--mode" in args else "confidential", "root": args[args.index("--root") + 1] if "--root" in args else "verity"}
     row["time_line_ms"] = wait_for("nitro: time", t0)
     row["defaults"] = exec_sh(DEFAULTS)["stdout"].split("\n")
     if setting in SETTINGS:

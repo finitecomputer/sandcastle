@@ -678,7 +678,11 @@ pub fn hold(args: &[String]) -> Result<Value, Failure> {
     let p = parent();
     let disk = flag(args, "--disk").unwrap_or("held");
     let folder_sock = PathBuf::from(RUN_ROOT).join(format!("folder-{disk}.sock"));
-    let svc = Services::start(&PathBuf::from(RUN_ROOT).join("services"), &policy(intercepts()), Some(folder_sock))?;
+    // `--allow <host>`: more hosts spliced through, as KMS's is (the home
+    // study's S3 endpoints).
+    let mut pol = policy(intercepts());
+    pol.allow.extend(args.windows(2).filter(|w| w[0] == "--allow").map(|w| w[1].clone()));
+    let svc = Services::start(&PathBuf::from(RUN_ROOT).join("services"), &pol, Some(folder_sock))?;
     crate::net::up(TAP)?;
     let _folder = match flag(args, "--store") {
         Some(st) => Some(Folder::start(args, Path::new(st), disk)?),
