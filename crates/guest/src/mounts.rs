@@ -74,11 +74,36 @@ pub fn dirs_after_basics(build: bool) -> Vec<&'static str> {
     }
 }
 
+/// The kernel command line's word naming the image's device in place of
+/// `disks::IMAGE`: a verity device the kernel made from its own command
+/// line (`dm-mod.create=`, so the root hash is measured with it), on a
+/// Nitro Sandbox (docs/nitro.md).
+pub const IMAGE_ARG: &str = disks::IMAGE_ARG;
+
+/// The image's device: `disks::IMAGE`, or what the kernel's own command
+/// line names. Read from the command line, never from the runner's start
+/// message, because the command line is what attestation measures and the
+/// runner is not trusted to pick the root. A named device that is not a
+/// device-mapper node is refused, not ignored: a guest told to verify its
+/// root must not boot an unverified one.
+pub fn image_device(cmdline: &str) -> Result<String, &'static str> {
+    let mut named = cmdline.split_ascii_whitespace().filter_map(|w| w.strip_prefix(IMAGE_ARG));
+    let first = named.next();
+    if named.next().is_some() {
+        return Err("the command line names the image twice");
+    }
+    match first {
+        None => Ok(disks::IMAGE.to_string()),
+        Some(d) if d.strip_prefix("/dev/dm-").is_some_and(|n| !n.is_empty() && n.len() <= 3 && n.bytes().all(|b| b.is_ascii_digit())) => Ok(d.to_string()),
+        Some(_) => Err("the command line names an image that is not /dev/dm-N"),
+    }
+}
+
 /// The workload's root: the image read-only, a fresh scratch disk as the
 /// overlay's upper layer, so every start begins from the image exactly.
-pub fn run_root() -> Vec<Mount> {
+pub fn run_root(image: &str) -> Vec<Mount> {
     vec![
-        m(disks::IMAGE, LOWER, "ext4", Flags { read_only: true, nodev: true, ..Flags::default() }, Some("noload")),
+        m(image, LOWER, "ext4", Flags { read_only: true, nodev: true, ..Flags::default() }, Some("noload")),
         m(disks::SCRATCH, SCRATCH, "ext4", Flags::default(), None),
     ]
 }
@@ -137,7 +162,7 @@ mod tests {
     // are the paths the plan mounts.
     #[test]
     fn image_read_only() {
-        let r = run_root();
+        let r = run_root(disks::IMAGE);
         assert_eq!(r[0].source, disks::IMAGE);
         assert!(r[0].flags.read_only);
         assert!(!r[1].flags.read_only);
@@ -146,6 +171,21 @@ mod tests {
         assert!(data.contains(LOWER) && data.contains(UPPER) && data.contains(WORK));
         assert!(data.split(',').any(|o| o == "xino=on"), "one st_dev for files and directories alike");
         assert!(UPPER.starts_with(SCRATCH) && WORK.starts_with(SCRATCH));
+    }
+
+    // Goal: the image's device comes from the kernel's command line only
+    // as a device-mapper node; absent, the krun path's disk is unchanged.
+    // Method: absent, present, twice, and not a dm node.
+    #[test]
+    fn image_device_from_the_command_line() {
+        assert_eq!(image_device("panic=1 quiet").unwrap(), disks::IMAGE);
+        assert_eq!(image_device("quiet sandcastle.image=/dev/dm-0 x=y").unwrap(), "/dev/dm-0");
+        assert_eq!(image_device("sandcastle.image=/dev/dm-12").unwrap(), "/dev/dm-12");
+        for bad in ["sandcastle.image=/dev/vdb", "sandcastle.image=/dev/dm-", "sandcastle.image=/dev/dm-1x", "sandcastle.image=/dev/dm-0 sandcastle.image=/dev/dm-1", "sandcastle.image=/dev/dm-1234"] {
+            assert!(image_device(bad).is_err(), "{bad}");
+        }
+        assert_eq!(run_root("/dev/dm-0")[0].source, "/dev/dm-0");
+        assert!(run_root("/dev/dm-0")[0].flags.read_only);
     }
 
     #[test]
