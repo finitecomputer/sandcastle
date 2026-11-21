@@ -26,7 +26,7 @@ here=$(dirname "$(realpath "$0")")
 # nitro/keep-computers (a restart that asks keeps the computers running);
 # macrofiche: its main; fragment: the tree given (its sha recorded).
 CELLD_REPO=https://github.com/futurepaul/celld
-CELLD_SHA=d69c999c260c5a70ac5462da2be975471e8bd685
+CELLD_SHA=2a159279faef1e48de01f73662f757426b9490df
 MACROFICHE_REPO=https://github.com/futurepaul/macrofiche
 MACROFICHE_SHA=a18dc98e9e3abbec769344772edd72e933c396d6
 # sandcastle-bridge, the home's half of the container engine's vsock bridge
