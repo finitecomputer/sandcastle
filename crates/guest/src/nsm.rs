@@ -61,8 +61,8 @@ fn text(out: &mut Vec<u8>, s: &str) {
 
 /// `{"Attestation": {"user_data": null, "nonce": <nonce>, "public_key":
 /// null}}`, encoded exactly as the NSM API's own serde does.
-pub fn attestation_request(nonce: &[u8; NONCE_BYTES]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(64 + NONCE_BYTES);
+pub fn attestation_request(nonce: &[u8; NONCE_BYTES], public_key: Option<&[u8; 32]>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(96 + NONCE_BYTES);
     head(&mut out, 5, 1);
     text(&mut out, "Attestation");
     head(&mut out, 5, 3);
@@ -72,7 +72,13 @@ pub fn attestation_request(nonce: &[u8; NONCE_BYTES]) -> Vec<u8> {
     head(&mut out, 2, NONCE_BYTES);
     out.extend_from_slice(nonce);
     text(&mut out, "public_key");
-    out.push(0xf6);
+    match public_key {
+        Some(k) => {
+            head(&mut out, 2, k.len());
+            out.extend_from_slice(k);
+        }
+        None => out.push(0xf6),
+    }
     assert!(out.len() <= REQUEST_BYTES_MAX);
     out
 }
@@ -328,14 +334,19 @@ mod tests {
 
     // Goal: our request is byte for byte the NSM API's. Method: its
     // pinned shape (aws-nitro-enclaves-nsm-api, src/api/mod.rs) with a
-    // 32-byte nonce, the only field the guest fills.
+    // 32-byte nonce, and with the session's 32-byte public key or none.
     #[test]
     fn the_request_is_the_nsm_apis() {
-        let r = attestation_request(&[1; NONCE_BYTES]);
+        let r = attestation_request(&[1; NONCE_BYTES], None);
         let mut want = unhex("a16b4174746573746174696f6ea369757365725f64617461f6656e6f6e63655820");
         want.extend_from_slice(&[1; NONCE_BYTES]);
         want.extend_from_slice(&unhex("6a7075626c69635f6b6579f6"));
         assert_eq!(r, want);
+        let with_key = attestation_request(&[1; NONCE_BYTES], Some(&[2; 32]));
+        let mut want = want[..want.len() - 1].to_vec();
+        want.extend_from_slice(&unhex("5820"));
+        want.extend_from_slice(&[2; 32]);
+        assert_eq!(with_key, want);
     }
 
     // Goal: the NSM's answers read as it writes them, and nothing else

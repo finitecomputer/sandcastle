@@ -179,6 +179,13 @@ fn run_nitro(config: VmConfig, nitro: crate::config::Nitro, events: Events, t0: 
             .spawn(move || serve_lifecycle(lifecycle_listener, &lifecycle, &events, &start))
             .map_err(io("spawning the lifecycle thread"))?;
     }
+    if nitro.session {
+        let (listener, vsock) = (bind(&config.sock(paths::SESSION_SOCK))?, vsock.clone());
+        std::thread::Builder::new()
+            .name("session".into())
+            .spawn(move || super::nitro::serve_port(listener, vsock, sandcastle_wire::PORT_SESSION))
+            .map_err(io("spawning the session relay"))?;
+    }
     std::thread::Builder::new()
         .name("agent".into())
         .spawn(move || super::nitro::serve_agent(agent_listener, vsock))

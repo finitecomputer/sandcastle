@@ -73,6 +73,11 @@ pub struct NitroConfig {
     /// without it, a node runs a computer per two of its pool's vCPUs.
     #[serde(default)]
     pub cpu_overcommit: bool,
+    /// Each computer takes exec and connections only over the attested
+    /// session of the home that claims it (docs/nitro.md): the node is a
+    /// home's. Off, the engine drives its guests itself, as a test node's.
+    #[serde(default)]
+    pub session_required: bool,
 }
 
 fn firecracker() -> String {
@@ -241,7 +246,7 @@ pub(crate) mod tests {
         assert!(bad(&|c| c.state_dir = "/".into()));
         assert!(bad(&|c| c.vms_max = 0));
         assert!(bad(&|c| c.uid_base = 1000));
-        let n = |firecracker: &str, kernel: &str, mke2fs: &str| Some(NitroConfig { firecracker: firecracker.into(), kernel: kernel.into(), mke2fs: mke2fs.into(), confidential: true, cpu_overcommit: false });
+        let n = |firecracker: &str, kernel: &str, mke2fs: &str| Some(NitroConfig { firecracker: firecracker.into(), kernel: kernel.into(), mke2fs: mke2fs.into(), confidential: true, cpu_overcommit: false, session_required: false });
         assert!(bad(&|c| c.nitro = n("../firecracker", "k", "m")));
         assert!(bad(&|c| c.nitro = n("firecracker", "", "m")));
         assert!(bad(&|c| c.nitro = n("firecracker", "k", "/usr/sbin/mke2fs")));

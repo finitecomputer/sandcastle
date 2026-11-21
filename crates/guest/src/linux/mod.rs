@@ -7,5 +7,6 @@ pub mod exec;
 pub mod init;
 pub mod net;
 pub mod seal;
+pub mod session;
 pub mod sys;
 pub mod trim;

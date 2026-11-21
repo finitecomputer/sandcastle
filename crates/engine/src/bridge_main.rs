@@ -2,10 +2,15 @@
 //! Nitro Sandbox of its own, over the home's vsock (docs/nitro.md, "The
 //! bridge"; `sandcastle_engine::linux::bridge`).
 //!
-//! - `home [--dir <dir>] [--intercepts <path>] [--owner <uid>:<gid>]`:
-//!   inside the home. `<dir>` (default `/run/sandcastle`) gets
-//!   `engine.sock` and `ports.sock`; `--intercepts` names celld's intercept
-//!   socket, which the parent's intercepts reach.
+//! - `home [--dir <dir>] [--intercepts <path>] [--owner <uid>:<gid>]
+//!   [--sessions <state dir> --pins <file>]`: inside the home. `<dir>`
+//!   (default `/run/sandcastle`) gets `engine.sock` and `ports.sock`;
+//!   `--intercepts` names celld's intercept socket, which the parent's
+//!   intercepts reach. With `--sessions`, on a node whose computers require
+//!   attested sessions, exec and ports go over each computer's session,
+//!   claimed at its start against the PCR0s in `--pins`. `--up <engine.sock>`
+//!   is a home on the parent itself: the engine's socket on this host in
+//!   place of the host's over vsock.
 //! - `parent --vsock <uds> --engine <engine.sock> [--ports <ports.sock>]
 //!   [--intercepts <path>] [--owner <uid>:<gid>]`: on the parent. `<uds>`
 //!   is the home's Firecracker vsock socket; `--ports` defaults to the one
@@ -17,7 +22,7 @@ use std::process::ExitCode;
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: sandcastle-bridge home [--dir <dir>] [--intercepts <path>] [--owner <uid>:<gid>]\n       \
+        "usage: sandcastle-bridge home [--dir <dir>] [--intercepts <path>] [--owner <uid>:<gid>] [--sessions <dir> --pins <file>] [--up <engine.sock>]\n       \
          sandcastle-bridge parent --vsock <uds> --engine <engine.sock> [--ports <ports.sock>] [--intercepts <path>] [--owner <uid>:<gid>]"
     );
     ExitCode::from(2)
@@ -39,6 +44,12 @@ fn main() -> ExitCode {
             intercepts: flag("--intercepts").map(PathBuf::from),
             cid: bridge::CID_HOST,
             owner,
+            sessions: match (flag("--sessions"), flag("--pins")) {
+                (Some(state), Some(pins)) => Some((state.into(), pins.into())),
+                (None, None) => None,
+                _ => return usage(),
+            },
+            up: flag("--up").map(PathBuf::from),
         }),
         Some("parent") => {
             let (Some(vsock), Some(engine)) = (flag("--vsock"), flag("--engine")) else { return usage() };

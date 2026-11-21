@@ -25,6 +25,13 @@ pub use message::*;
 pub const PORT_LIFECYCLE: u32 = 1025;
 /// The guest listens here; each host connection is one request.
 pub const PORT_AGENT: u32 = 1024;
+/// A Nitro guest's attested session (`sandcastle_session`): the home's
+/// requests, each a connection, sealed end to end through the parent.
+pub const PORT_SESSION: u32 = 1026;
+/// The kernel-line word by which a Nitro guest takes exec, connections and
+/// the rest of the agent's work only over its attested session. The line
+/// is measured, so the parent cannot drop the word without changing PCR0.
+pub const SESSION_ARG: &str = "sandcastle.session=required";
 /// The guest's view of the host on vsock (`VMADDR_CID_HOST`).
 pub const CID_HOST: u32 = 2;
 /// The guest's own address on vsock.

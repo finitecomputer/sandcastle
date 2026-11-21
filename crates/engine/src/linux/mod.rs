@@ -5,5 +5,6 @@ pub mod cgroup;
 pub mod engine;
 pub mod exec;
 pub mod files;
+pub mod home;
 pub mod ports;
 pub mod server;

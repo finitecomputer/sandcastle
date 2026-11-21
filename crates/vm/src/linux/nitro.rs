@@ -134,12 +134,17 @@ pub fn splice(a: UnixStream, b: UnixStream) {
 /// its own into the guest. A connection the guest refuses is dropped, as
 /// libkrun drops one.
 pub fn serve_agent(listener: UnixListener, vsock: std::path::PathBuf) {
+    serve_port(listener, vsock, sandcastle_wire::PORT_AGENT)
+}
+
+/// The same for any of the guest's vsock ports (its attested session's).
+pub fn serve_port(listener: UnixListener, vsock: std::path::PathBuf, port: u32) {
     // Unbounded by design: the agent socket serves for the VM's life.
     for conn in listener.incoming() {
         let Ok(host) = conn else { continue };
         let vsock = vsock.clone();
         let _ = std::thread::Builder::new().name("agent-relay".into()).spawn(move || {
-            let Ok(guest) = connect_agent(&vsock) else { return };
+            let Ok(guest) = connect_port(&vsock, port) else { return };
             splice(host, guest);
         });
     }

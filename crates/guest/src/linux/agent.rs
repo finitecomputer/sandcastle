@@ -38,12 +38,23 @@ pub struct Ctx {
     connections: AtomicUsize,
     /// Bumped by every freeze, so a timed thaw only thaws its own.
     freezes: AtomicUsize,
+    /// The kernel line's `SESSION_ARG`: the host's own port takes only
+    /// what `host_may`; everything else comes over the attested session.
+    session_required: bool,
 }
 
 impl Ctx {
-    pub fn new(mnt: OwnedFd, entry_pid: libc::pid_t) -> Ctx {
-        Ctx { mnt, entry_pid, processes: AtomicUsize::new(0), connections: AtomicUsize::new(0), freezes: AtomicUsize::new(0) }
+    pub fn new(mnt: OwnedFd, entry_pid: libc::pid_t, session_required: bool) -> Ctx {
+        Ctx { mnt, entry_pid, processes: AtomicUsize::new(0), connections: AtomicUsize::new(0), freezes: AtomicUsize::new(0), session_required }
     }
+}
+
+/// What the parent keeps on a guest whose work goes over its attested
+/// session: whether it runs, its stop (a signal to the entrypoint), and the
+/// memory trim. Exec, connections into the guest, freezes and the rest
+/// come only over the session.
+pub fn host_may(req: &Request) -> bool {
+    matches!(req, Request::Ping | Request::Signal { .. } | Request::Reclaim)
 }
 
 // FIFREEZE and FITHAW, _IOWR('X', 119/120, int).
@@ -123,7 +134,23 @@ async fn send(w: &mut OwnedWriteHalf, reply: &Reply) -> Result<(), WireError> {
     Ok(())
 }
 
-pub async fn serve(listener: AsyncFd<OwnedFd>, ctx: Arc<Ctx>) -> std::convert::Infallible {
+pub async fn serve(listener: AsyncFd<OwnedFd>, sessions: Option<mpsc::Receiver<OwnedFd>>, ctx: Arc<Ctx>) -> std::convert::Infallible {
+    // The attested session's connections (`super::session`), each with all
+    // of the agent's work.
+    if let Some(mut sessions) = sessions {
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            // Bounded by the session thread's life, which is the VM's.
+            while let Some(fd) = sessions.recv().await {
+                let ctx = ctx.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = connection(fd, ctx, true).await {
+                        eprintln!("agent: {e}");
+                    }
+                });
+            }
+        });
+    }
     // Unbounded by design: the agent serves for the VM's life; each
     // connection is bounded by CONNECTIONS_MAX and PROCESSES_MAX.
     loop {
@@ -138,7 +165,7 @@ pub async fn serve(listener: AsyncFd<OwnedFd>, ctx: Arc<Ctx>) -> std::convert::I
             Ok(fd) => {
                 let ctx = ctx.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = connection(fd, ctx).await {
+                    if let Err(e) = connection(fd, ctx, false).await {
                         eprintln!("agent: {e}");
                     }
                 });
@@ -149,7 +176,9 @@ pub async fn serve(listener: AsyncFd<OwnedFd>, ctx: Arc<Ctx>) -> std::convert::I
     }
 }
 
-async fn connection(fd: OwnedFd, ctx: Arc<Ctx>) -> Result<(), WireError> {
+/// One connection: the host's own (`session`: false) or an attested
+/// session's plain end (true).
+async fn connection(fd: OwnedFd, ctx: Arc<Ctx>, session: bool) -> Result<(), WireError> {
     let std_stream = std::os::unix::net::UnixStream::from(fd);
     let stream = UnixStream::from_std(std_stream)?;
     let (rd, mut wr) = stream.into_split();
@@ -162,6 +191,9 @@ async fn connection(fd: OwnedFd, ctx: Arc<Ctx>) -> Result<(), WireError> {
         Ok(r) => r,
         Err(e) => return send(&mut wr, &Reply::error(ErrorKind::Invalid, e.to_string())).await,
     };
+    if ctx.session_required && !session && !host_may(&req) {
+        return send(&mut wr, &Reply::error(ErrorKind::Refused, "this guest takes that only over its attested session")).await;
+    }
     match req {
         Request::Ping => send(&mut wr, &Reply::Pong { uptime_ms: sys::uptime_ms() }).await,
         Request::Exec { process, pty, stdin, stdout, stderr } => run_exec(&ctx, process, pty, (stdin, stdout, stderr), frames, wr).await,

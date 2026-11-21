@@ -366,6 +366,16 @@ impl Engine {
         &self.config
     }
 
+    /// Where a running computer's attested session is relayed: only a
+    /// Nitro node's that requires sessions has one.
+    pub fn session_socket(&self, name: &str) -> Result<PathBuf, ApiError> {
+        let vm = self.get(name)?;
+        if !self.config.nitro.as_ref().is_some_and(|n| n.session_required) {
+            return Err(ApiError::Invalid("this node's computers take no attested session".into()));
+        }
+        Ok(vm.run_dir.join(sandcastle_vm::paths::SESSION_SOCK))
+    }
+
     fn get(&self, name: &str) -> Result<Arc<Vm>, ApiError> {
         self.inner
             .lock()
@@ -802,6 +812,8 @@ impl Engine {
             confidential,
             cpu_overcommit: n.cpu_overcommit,
             guest_cid: sandcastle_vm::firecracker::GUEST_CID_MIN + slot,
+            // A run's, never a build's: the engine drives a build itself.
+            session: n.session_required && verity.is_some(),
             verity,
         })
     }
@@ -1359,16 +1371,8 @@ impl Engine {
     /// started (Cloudflare's `exec` resolves then), with its pid. A command
     /// the guest cannot start is refused here, before any stream.
     pub async fn exec_open(&self, name: &str, req: api::ExecRequest) -> Result<(sandcastle_vm::client::ExecSession, u32), ApiError> {
-        req.validate()?;
         let path = self.get(name)?.path_env.clone();
-        let mut env: Vec<String> = req.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
-        if !req.env.contains_key("PATH") {
-            env.extend(path.map(|p| format!("PATH={p}")));
-        }
-        let process = Process { argv: req.cmd, env, cwd: req.cwd, user: req.user };
-        process.validate().map_err(|e| ApiError::Invalid(format!("exec: {e}")))?;
-        let pty = req.pty.map(|p| sandcastle_wire::WinSize { rows: p.rows, cols: p.cols });
-        let (stdin, stdout, stderr) = (req.stdin, req.stdout, req.stderr);
+        let api::ExecPlan { process, pty, stdin, stdout, stderr } = api::exec_plan(req, path)?;
         let opened = self
             .agent(name, move |c| {
                 let mut s = c.exec_with(process, stdin, pty, stdout, stderr)?;

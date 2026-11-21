@@ -65,6 +65,14 @@ pub struct Home {
     pub cid: u32,
     /// The sockets' owner, when celld runs as another user.
     pub owner: Option<(u32, u32)>,
+    /// On a node whose computers require attested sessions: this home's
+    /// state directory (its credentials) and its pins (the PCR0s of the
+    /// images it runs). The home half then serves exec and ports itself,
+    /// over each computer's session (`super::home`).
+    pub sessions: Option<(PathBuf, PathBuf)>,
+    /// The engine's `engine.sock` on this host, in place of the host's over
+    /// vsock: a home on the parent itself (and `ports.sock` beside it).
+    pub up: Option<PathBuf>,
 }
 
 /// The parent's half.
@@ -93,21 +101,47 @@ pub fn home(h: Home) -> io::Result<()> {
         None => None,
     };
     eprintln!(
-        "sandcastle-bridge: home: {} to vsock {}:{PORT_ENGINE} and :{PORT_PORTS}; {}",
+        "sandcastle-bridge: home: {} to {}; {}; {}",
         h.dir.display(),
-        h.cid,
+        match &h.up {
+            Some(at) => at.display().to_string(),
+            None => format!("vsock {}:{PORT_ENGINE} and :{PORT_PORTS}", h.cid),
+        },
         match &h.intercepts {
             Some(p) => format!("vsock :{PORT_INTERCEPTS} to {}", p.display()),
             None => "no intercepts".into(),
-        }
+        },
+        if h.sessions.is_some() { "exec and ports over each computer's attested session" } else { "no sessions" }
     );
     let cid = h.cid;
     let (tx, ended) = mpsc::channel();
-    serving("engine", &tx, move || accept_unix(&engine), move |c| {
-        splice(c, vsock_connect(cid, PORT_ENGINE)?);
-        Ok(())
-    })?;
-    serving("ports", &tx, move || accept_unix(&ports_l), move |c| home_port(c, || vsock_connect(cid, PORT_PORTS)))?;
+    let up_engine: super::home::Up = match h.up.clone() {
+        Some(at) => Arc::new(move || UnixStream::connect(&at)),
+        None => Arc::new(move || vsock_connect(cid, PORT_ENGINE)),
+    };
+    let up_ports: super::home::Up = match h.up.as_ref().and_then(|at| at.parent()).map(|d| d.join("ports.sock")) {
+        Some(at) => Arc::new(move || UnixStream::connect(&at)),
+        None => Arc::new(move || vsock_connect(cid, PORT_PORTS)),
+    };
+    if let Some((state, pins)) = &h.sessions {
+        let up = up_engine.clone();
+        let sessions = Arc::new(super::home::Sessions::open(state, pins, up)?);
+        let ended_tx = Ended("engine", tx.clone());
+        let for_engine = sessions.clone();
+        std::thread::Builder::new().name("bridge-engine".into()).spawn(move || {
+            let _ended = ended_tx;
+            if let Err(e) = super::home::serve_engine(engine, for_engine) {
+                eprintln!("sandcastle-bridge: engine: {e}");
+            }
+        })?;
+        serving("ports", &tx, move || accept_unix(&ports_l), move |c| super::home::port(c, &sessions))?;
+    } else {
+        serving("engine", &tx, move || accept_unix(&engine), move |c| {
+            splice(c, up_engine()?);
+            Ok(())
+        })?;
+        serving("ports", &tx, move || accept_unix(&ports_l), move |c| home_port(c, || up_ports()))?;
+    }
     if let Some((l, path)) = intercepts {
         serving("intercepts", &tx, move || vsock_accept(&l), move |c| {
             splice(c, UnixStream::connect(&path)?);
@@ -215,7 +249,7 @@ fn parent_port(guest: UnixStream, ports_sock: &Path) -> io::Result<()> {
 
 /// A request line, its newline kept, read a byte at a time (what follows
 /// it is the connection's).
-fn read_line(s: &UnixStream) -> io::Result<Vec<u8>> {
+pub(super) fn read_line(s: &UnixStream) -> io::Result<Vec<u8>> {
     let mut line = Vec::new();
     let mut b = [0u8; 1];
     loop {

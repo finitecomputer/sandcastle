@@ -18,6 +18,8 @@ sandcastle-wire.workspace = true
 sandcastle-vm.workspace = true
 sandcastle-rootfs.workspace = true
 sandcastle-egress.workspace = true
+sandcastle-session.workspace = true
+sandcastle-nitro-attest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -29,3 +31,6 @@ libc.workspace = true
 sha2.workspace = true
 hex.workspace = true
 tar.workspace = true
+
+[dev-dependencies]
+sandcastle-nitro-attest = { workspace = true, features = ["testkit"] }
