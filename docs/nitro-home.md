@@ -121,6 +121,57 @@ The home is our own measured code, so it takes no egress proxy. Its
 traffic is KMS, S3, the model API and Let's Encrypt, all over TLS the home
 ends, plus DNS.
 
+### Certificates and CAA
+
+Caddy in the home holds one ACME account, at Let's Encrypt's production
+directory. Its key and the certificates live in Caddy's storage on the
+encrypted disk (`/var/lib/fragment-home/caddy`), so the parent never sees
+the key. The DNS then names that account as the only one that may be
+issued certificates for the home's names (RFC 8659, and RFC 8657 for
+`accounturi`), on the platform's name alone:
+
+```
+nitro.<zone>  CAA 0 issue     "letsencrypt.org; accounturi=https://acme-v02.api.letsencrypt.org/acme/acct/<n>"
+nitro.<zone>  CAA 0 issuewild ";"
+```
+
+A fragment's name (`<app>.nitro.<zone>`) holds no CAA of its own, so a CA
+climbs to the platform's name and finds these. Every other CA refuses
+(each must check CAA), Let's Encrypt refuses every other account, and no
+CA may issue a wildcard, which the home never takes.
+
+Proved on 2026-11-21, with the records in place:
+
+- a fragment deployed from the CLI under a new name got its certificate on
+  its first visit, in 4.2 s (Let's Encrypt, issued for that name alone);
+- another account (a new one, on Let's Encrypt's staging directory, by
+  DNS-01) asking for a name under the platform's was refused:
+  `urn:ietf:params:acme:error:caa`, "CAA record for nitro.<zone> prevents
+  issuance".
+
+The home's account URI is the `location` in
+`/var/lib/fragment-home/caddy/acme/acme-v02.api.letsencrypt.org-directory/users/default/default.json`
+(the account key beside it never leaves the home).
+
+**If the home ever gets a new ACME account** (its disk remade, the home
+moved, the key rotated), change the `issue` record **before** that home
+needs a certificate:
+
+1. Start the new home. Caddy registers its new account at its first order,
+   which the CAA record refuses: nothing is issued yet.
+2. Read the new account's URI from that `default.json`.
+3. Replace the `accounturi` in the `issue` record (a DNS change, so the
+   owner's), keeping the TTL at 300 s.
+4. After the TTL, restart the home or wait for Caddy's retry. It then gets
+   its certificates.
+
+Caddy renews a certificate when a third of its life is left (about 30 of
+90 days), always with the same account, so renewal needs no change to the
+record. Losing the key by accident means losing the disk, and so the
+certificates with it: the front door then has none until step 3 is done.
+For a planned move, let both accounts be named for a while: two `issue`
+records, one for each `accounturi`, then the old one removed.
+
 ## Computers
 
 Lane A's engine (sandcastle's Nitro backend) runs on the parent.
@@ -189,7 +240,7 @@ Each item is with the design PR that closes it
 | 2 | **Whoever ships a new home image can ship one that skips the passkey check**, or anything else: the project's administrators can name any PCR0 in the key's policy (`kms:Put*`), and AWS can too | PR 10, a release rule we cannot change alone |
 | 3 | **It can roll back or swap the home's data disk** (an older copy, or another home's under the same key). It cannot read it: AES-XTS under a key from KMS. The encryption is not authenticated, so it can also corrupt blocks | PR 9 (rollback), with dm-integrity |
 | 4 | **The fleet bucket is unsealed.** The parent's role has no access, and the home's traffic to S3 is TLS the home ends. But whoever holds AWS administration, or the home's IAM key, reads every object, and can roll the bucket back | The sealed fleet bucket (phase 2) |
-| 5 | **It could get a certificate for the home's names**: TLS-ALPN-01 validates whoever answers on the address the DNS names, and the parent holds that address. It could then stand between browsers and the home | Not a design PR: a CAA record naming the home's own ACME account (`accounturi`, RFC 8657), whose key never leaves the home |
+| 5 | ~~It could get a certificate for the home's names~~ (TLS-ALPN-01 validates whoever answers on the address the DNS names, and the parent holds that address) | **Closed** 2026-11-21: CAA records name the home's own ACME account (`accounturi`, RFC 8657), whose key never leaves the home, and forbid wildcards. Another account was refused ("Certificates and CAA") |
 | 6 | It sees traffic metadata: clients' addresses, the names they ask for (SNI, so the fragments' names), sizes and timing, and the names the home resolves | Inherent to the parent carrying the bytes; DNS over TLS would hide the last |
 | 7 | It sees the home's log lines: the boot's steps, celld's warnings, the attestation document. The door's, macrofiche's and celld's full logs stay on the encrypted disk | Keep the parent's view to the boot's steps |
 | 8 | It sees phase 1's invite link (`fragment-identity-door invite`, run over its own exec), and could use it first | Invites made and handed over on the attested channel (PR 6), to the owner alone |
@@ -209,7 +260,10 @@ Outside the parent:
 
 - the operator's machine saw every secret it sealed;
 - OpenRouter sees the agents' prompts (the model route);
-- an email in an invite is the invite's word, not verified.
+- an email in an invite is the invite's word, not verified;
+- whoever can change the zone's DNS (its DNS host's account, or a token
+  for the zone) can change the CAA records and get certificates for the
+  home's names by DNS-01.
 
 ## Not verified
 
@@ -226,4 +280,8 @@ Outside the parent:
   then worked.
 - One run each; no load, no density, no x86 parent.
 - The home's ACME account is Let's Encrypt's production. Its rate limits
-  were not hit: three certificates were issued for finite.house names today (the unused DNS-01 wildcard among them).
+  were not hit (50 a week for a registered domain): six certificates were
+  issued for the zone's names today, the five the home holds and the
+  unused DNS-01 wildcard from before the CAA records.
+- A renewal under the CAA records (none is due for about 60 days), and
+  any CA other than Let's Encrypt refusing.
