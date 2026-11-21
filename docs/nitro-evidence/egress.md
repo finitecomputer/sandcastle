@@ -44,3 +44,25 @@ Before this, the parent's own reached the port over the NIC (`session.md`).
 now run through the home's own egress: `interceptOutboundHttp` 15 ms,
 `interceptOutboundHttps` 13 ms (the workload trusting the home's CA, from
 the claim), `interceptAllOutboundHttp` 10 ms.
+
+## On the shared parent, with the real home
+
+The same switch on the parent that runs the real home (celld and the real
+cell, in its own confidential sandbox), with its owner's account on it. The
+engine was flipped with no computer running; the home was reimaged right
+after, with the new Hermes PCR0 pinned before any computer started, so no
+start was refused.
+
+| | Result |
+|---|---|
+| A test agent's computer, woken under this guest | first try; its restored file there; 8 s from send to reply |
+| The canary, sent 3 times from that agent's terminal | the home's celld logged it 3 times |
+| **The parent's engine saw it, in plain text** | **0** (of 8,457 traced syscalls) |
+| The bridge's parent half saw it | 0 (of 10,775) |
+| The parent at the engine's `ports.sock`, ports 6080 and 8642 | refused: "the guest did not accept … within 5s" |
+| The owner's account, people and apps | unchanged (counted before and after) |
+
+Not run there: celld's conformance suite, because the real home's celld
+runs inside its sandbox and the suite needs a test client beside it (the
+23/25 above is from a parent of this lane's own). The owner's own computer
+was asleep at the switch; it starts under this guest at his next message.
