@@ -179,6 +179,54 @@ live per listener. The intercept path is celld's
 `<data dir>/intercepts-<6 hex of sha256(node)>.sock`: run the home's celld
 with a fixed `CELLD_NODE` and give both halves that path.
 
+## What the parent can still see and do
+
+A confidential sandbox keeps its memory from the parent. Everything that
+crosses the sandbox's edge, the parent still holds. As built here, for a
+computer:
+
+**It sees:**
+
+1. **Intercepted traffic, in plain text.** The egress proxy runs in the
+   engine, on the parent, and terminates TLS for every intercepted host
+   with the node's CA. On a Fragment node those are the platform's API,
+   the model routes and the saves (`backups.sandbox.internal`): the
+   agent's conversations, its tool calls and its saved files all pass
+   through it. Hosts that are not intercepted are spliced, so the parent
+   sees their names and sizes but not their contents.
+2. **Exec and terminals.** `agent.sock` is relayed on the parent: every
+   `exec()` (the saves' shim included), its output and a terminal's
+   keystrokes.
+3. **Ports.** A connection to a computer's port (the screen's VNC, an
+   app) is the engine's TCP socket: the parent sees its bytes.
+4. **Disks.** The scratch and data disks are plain ext4 files on the
+   parent, readable while the computer runs and after. Snapshots copy the
+   scratch disk. Only the image is protected, and only its integrity
+   (dm-verity): its contents are public anyway.
+5. **Metadata:** when each computer starts and stops, its size, its DNS
+   names, and the timing and size of everything above.
+
+**It can:**
+
+6. **Run commands in a computer.** The guest's agent serves any
+   connection to its vsock port, and the parent can open one: this alone
+   undoes the memory's protection.
+7. **Change what it relays:** answer or alter an intercepted request, a
+   disk's blocks (the scratch and data disks have no integrity), or an
+   exec's output.
+8. **Boot something else in a computer's place.** A computer's NSM signs
+   its PCRs, but nothing checks them: no one asks a computer for its
+   document before trusting it.
+9. **Stop, refuse or slow anything** (availability is never protected).
+
+**What closes each, later:** an attested channel from the home to each
+computer (the guest makes a key, its NSM document binds it, the home
+checks the PCRs before it talks to it) closes 6, 7 and 8 for exec, and
+carries 1 to 3 end to end if the proxy's TLS ends in the guest or in the
+home instead of on the parent. Disks encrypted by the guest, with a key
+released to an attested guest only, close 4 (the sealed scratch disk,
+not built here).
+
 ## Evidence
 
 `docs/nitro-evidence/` holds one real run on a parent (an m8g.xlarge,
