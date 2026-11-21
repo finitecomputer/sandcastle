@@ -139,7 +139,19 @@ fn run(
     }
     let cmdline = std::fs::read_to_string("/proc/cmdline").map_err(io("reading the kernel's command line"))?;
     let image = mounts::image_device(&cmdline).map_err(|e| InitError::Refused(e.to_string()))?;
-    for m in mounts::run_root(&image) {
+    // A Nitro Sandbox (it has an NSM) seals its scratch disk under a key it
+    // makes now and never shows (docs/nitro.md), and takes no data disk,
+    // which would outlive that key in plain text on the host.
+    let sealed = std::path::Path::new(crate::nsm::DEVICE).exists();
+    if sealed && data.is_some() {
+        return Err(InitError::Refused("a sealed guest takes no data disk: it would be plain text on its host".into()));
+    }
+    let scratch = if sealed {
+        super::seal::open(sandcastle_wire::disks::SCRATCH).map_err(io("sealing the scratch disk"))?
+    } else {
+        sandcastle_wire::disks::SCRATCH.to_string()
+    };
+    for m in mounts::run_root(&image, &scratch) {
         sys::mount(&m).map_err(io("mounting the root's layers"))?;
     }
     sys::mkdir_p(mounts::UPPER).map_err(io("mkdir upper"))?;

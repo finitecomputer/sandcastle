@@ -322,14 +322,16 @@ impl Engine {
         let nitro = match &c.nitro {
             None => None,
             Some(n) => {
-                for f in [&n.firecracker, &n.kernel] {
+                for f in [&n.firecracker, &n.kernel, &n.mke2fs] {
                     if !c.lib_dir.join(f).is_file() {
-                        return Err(ApiError::Internal(format!("{}: no such file (nitro/parent-ready.sh, nitro/guest-kernel.sh)", c.lib_dir.join(f).display())));
+                        return Err(ApiError::Internal(format!("{}: no such file (nitro/parent-ready.sh, nitro/guest-kernel.sh, nitro/guest-mke2fs.sh)", c.lib_dir.join(f).display())));
                     }
                 }
-                let initrd = c.boot().join(format!("guest-{}.initrd", &sha[..12]));
+                let mke2fs = std::fs::read(c.lib_dir.join(&n.mke2fs)).map_err(internal("the guest's mke2fs"))?;
+                let archive = sandcastle_rootfs::initrd::guest(&guest, &mke2fs);
+                let initrd = c.boot().join(format!("guest-{}.initrd", &hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&archive))[..12]));
                 if !initrd.exists() {
-                    write_atomic(&initrd, &sandcastle_rootfs::initrd::guest(&guest)).map_err(internal("the guest's initrd"))?;
+                    write_atomic(&initrd, &archive).map_err(internal("the guest's initrd"))?;
                 }
                 let empty = c.boot().join("empty.disk");
                 if !empty.exists() {
@@ -880,6 +882,11 @@ impl Engine {
         let t0 = Instant::now();
         api::validate_name(name)?;
         let res = req.validate()?;
+        if self.nitro.is_some() {
+            if let Some(refused) = sealed_refusal(&req) {
+                return Err(refused);
+            }
+        }
         let (image, snapshot) = match (&req.image, &req.container_snapshot) {
             (Some(reference), None) => (self.image(reference).await?, None),
             (None, Some(s)) => {
@@ -946,7 +953,15 @@ impl Engine {
 
     /// A fresh writable layer of `disk_mb`, copied from a template made once
     /// per size (a copy of its data takes milliseconds; `mke2fs` takes ten).
+    /// A Nitro Sandbox's is a sparse file and no more: its guest seals it
+    /// under a key of its own and formats it (docs/nitro.md).
     fn scratch(&self, run_dir: &Path, disk_mb: u32) -> Result<PathBuf, ApiError> {
+        if self.nitro.is_some() {
+            let p = run_dir.join("scratch.ext4");
+            let f = std::fs::File::create(&p).map_err(internal("a scratch disk"))?;
+            f.set_len(disk_mb as u64 * 1_000_000).map_err(internal("a scratch disk"))?;
+            return Ok(p);
+        }
         let template = self.config.tmp().join(format!("scratch-{disk_mb}.ext4"));
         if !template.exists() {
             let part = self.config.tmp().join(format!("scratch-{disk_mb}.part"));
@@ -1422,6 +1437,9 @@ impl Engine {
     /// `snapshotContainer({name})`: the writable root, as of now.
     pub async fn snapshot(&self, name: &str, snapshot_name: Option<String>) -> Result<Snapshot, ApiError> {
         api::validate_snapshot_name(&snapshot_name)?;
+        if self.nitro.is_some() {
+            return Err(ApiError::Invalid(SEALED_SNAPSHOT.into()));
+        }
         let vm = self.get(name)?;
         let id = state::snapshot_id(&random16().map_err(internal("a snapshot id"))?);
         let dir = self.config.snapshots().join(&id);
@@ -1571,6 +1589,23 @@ async fn wait_event(l: &mut Launched, name: &str) -> Result<Value, ApiError> {
     .map_err(|_| ApiError::Internal(format!("no {name} in time")))?
 }
 
+/// Why a Nitro node takes no snapshot: the scratch disk is ciphertext under
+/// a key only its guest held, gone with it.
+const SEALED_SNAPSHOT: &str = "a Nitro Sandbox's scratch disk is sealed by a key only its guest held, gone with it: there is nothing to snapshot or start from";
+
+/// What a Nitro node refuses of a start, before anything is reserved: a
+/// start from a snapshot (there are none), and a data disk, which would
+/// outlive the guest's key in plain text on the parent.
+fn sealed_refusal(req: &StartRequest) -> Option<ApiError> {
+    if req.container_snapshot.is_some() {
+        return Some(ApiError::Invalid(SEALED_SNAPSHOT.into()));
+    }
+    if req.data.is_some() {
+        return Some(ApiError::Invalid("a Nitro Sandbox takes no data disk: it would outlive its guest's key, in plain text on the parent".into()));
+    }
+    None
+}
+
 /// The digest `reference` is pinned by (`<name>@sha256:<64 hex>`), if it is.
 fn pinned_digest(reference: &str) -> Option<String> {
     Reference::parse(reference).ok()?.digest.map(|d| d.to_string())
@@ -1590,5 +1625,26 @@ mod pinned_tests {
         assert_eq!(pinned_digest("docker.io/library/fragment-stub:local"), None);
         assert_eq!(pinned_digest("fragment-stub@sha256:short"), None);
         assert_eq!(pinned_digest(""), None);
+    }
+}
+
+#[cfg(test)]
+mod sealed_tests {
+    use super::*;
+
+    /// Goal: a Nitro node refuses, before anything is reserved, a start from
+    /// a snapshot and a start with a data disk, and takes a plain start.
+    #[test]
+    fn a_nitro_node_refuses_what_would_outlive_the_key() {
+        let req = |extra: serde_json::Value| {
+            let mut v = serde_json::json!({ "image": "img", "enableInternet": false });
+            v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            serde_json::from_value::<StartRequest>(v).unwrap()
+        };
+        assert!(sealed_refusal(&req(serde_json::json!({}))).is_none());
+        let from_snapshot = serde_json::from_value::<StartRequest>(serde_json::json!({ "containerSnapshot": { "id": "s1" }, "enableInternet": false })).unwrap();
+        assert!(matches!(sealed_refusal(&from_snapshot), Some(ApiError::Invalid(m)) if m.contains("sealed")));
+        let with_data = req(serde_json::json!({ "data": { "name": "d", "path": "/data", "gib": 1 } }));
+        assert!(matches!(sealed_refusal(&with_data), Some(ApiError::Invalid(m)) if m.contains("data disk")));
     }
 }
