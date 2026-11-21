@@ -20,7 +20,7 @@
 UEFI firmware (version  built at 09:00:00 on Nov  1 2018)
 [2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[0m[35m[40m[0m[37m[40mEifLoader: NSM bound at 0000:00:02.0 (DID 0x1061)
 [    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd4f1]
-[    0.000000] Linux version 6.18.62+ (ec2-user@ip-172-31-38-191.us-east-2.compute.internal) (gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5), GNU ld version 2.41-50.amzn2023.0.5) #1 SMP Fri Nov 20 22:26:31 UTC 2026
+[    0.000000] Linux version 6.18.62+ (<parent-host>) (gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5), GNU ld version 2.41-50.amzn2023.0.5) #1 SMP Fri Nov 20 22:26:31 UTC 2026
 [    0.000000] efi: EFI v2.7 by EDK II
 [    0.000000] efi: ACPI=0x57ae0000 ACPI 2.0=0x57ae0014 INITRD=0x5667ff18 RNG=0x551f0018 MEMRESERVE=0x5667ff98 
 [    0.000000] random: crng init done

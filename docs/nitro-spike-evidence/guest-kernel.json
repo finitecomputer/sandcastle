@@ -4,8 +4,14 @@
  "commit": "b7522fb67989bd879de78486e9e253fd2f21f1dd",
  "firecracker_config": "firecracker-v1.18",
  "firecracker_config_sha256": "35cce8e8b754a84523ca20dc068fc3f8f03a15523be36a8623bad54e11972e2a",
- "spike_config_sha256": "2f7f38e41a1fe6f0af0fc593b92933ad5064dd6e51e46a976da0868931011da3",
+ "spike_config_sha256": "1f8bcd5622784ca26a44c6256433dfc07ce3395258798554ee23a541249ad697",
  "image": "Image",
- "image_sha256": "00a6338e6bb50c2aa150f8eed1afd8c8cd6137c4c5e531fc9979c4cf3c9c9fb9",
- "release": "6.18.62+"
+ "image_sha256": "09f1ba2c1368c0a96bfd08cc50e237947753fe2318740512d9fc35c699f4b646",
+ "release": "6.18.62",
+ "kbuild": {
+  "user": "builder",
+  "host": "nitro-spike",
+  "version": "1",
+  "timestamp": "the tag's commit date"
+ }
 }
