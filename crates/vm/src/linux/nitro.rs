@@ -160,7 +160,9 @@ mod tests {
         assert_eq!(drives.len(), 3);
         assert_eq!((drives[0]["is_read_only"].as_bool(), drives[1]["is_read_only"].as_bool(), drives[2]["is_read_only"].as_bool()), (Some(true), Some(true), Some(false)));
         assert!(drives.iter().all(|d| d["is_root_device"] == false && d["dmb_size_mib"] == 16));
-        assert_eq!(json["network-interfaces"][0]["guest_mac"], "02:53:43:00:00:07");
+        let Net::Tap { mac, .. } = &c.net else { panic!("a tap") };
+        let mac = mac.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":");
+        assert_eq!(json["network-interfaces"][0]["guest_mac"], mac.as_str());
         assert_eq!(json["vsock"]["uds_path"], "/vm/v.sock");
         assert_eq!(json["vsock"]["guest_cid"], 10);
         assert_eq!(json["enclave"]["direct_mode"], false);
