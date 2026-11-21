@@ -14,7 +14,9 @@
 //
 // Steps: go (a URL), wait (a CSS selector), fill ([selector, text]), click
 // (a selector), waitUrl (a regex), text (a selector: its text back),
-// eval (an expression: its value back), sleep (ms). Each answers with what
+// eval (an expression: its value back), sleep (ms), credentials (each
+// device's), addAuthenticator (another device), removeAuthenticator (the
+// oldest device, lost with its passkeys). Each answers with what
 // it saw; the first failure stops the plan. Another tool (agent-browser
 // --cdp <port>) may drive the same Chrome meanwhile: its cookies are this
 // profile's.
@@ -63,9 +65,13 @@ const s = (method, params) => send(method, params, sessionId);
 await s("Page.enable");
 await s("Runtime.enable");
 await s("WebAuthn.enable", { enableUI: false });
-const { authenticatorId } = await s("WebAuthn.addVirtualAuthenticator", {
-  options: { protocol: "ctap2", ctap2Version: "ctap2_1", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
-});
+// the first a platform authenticator, each later one a security key (Chrome
+// holds one internal authenticator a tab)
+const authenticator = async (transport) => (await s("WebAuthn.addVirtualAuthenticator", {
+  options: { protocol: "ctap2", ctap2Version: "ctap2_1", transport, hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+})).authenticatorId;
+// the authenticators this tab holds, oldest first (a device each)
+const authenticators = [await authenticator("internal")];
 
 async function evaluate(expression) {
   const r = await s("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
@@ -99,7 +105,17 @@ async function step(st) {
   if (st.text) return { text: await until(st.text, () => evaluate(`document.querySelector(${q(st.text)})?.innerText`)) };
   if (st.eval !== undefined) return { value: await evaluate(st.eval) };
   if (st.sleep) { await sleep(st.sleep); return { slept: st.sleep }; }
-  if (st.credentials) { const { credentials } = await s("WebAuthn.getCredentials", { authenticatorId }); return { credentials: credentials.map((c) => ({ rpId: c.rpId, isResidentCredential: c.isResidentCredential, signCount: c.signCount })) }; }
+  if (st.credentials) {
+    const out = [];
+    for (const authenticatorId of authenticators) {
+      const { credentials } = await s("WebAuthn.getCredentials", { authenticatorId });
+      out.push(credentials.map((c) => ({ rpId: c.rpId, signCount: c.signCount })));
+    }
+    return { credentials: out };
+  }
+  // another device; or the oldest one gone (its passkeys lost with it)
+  if (st.addAuthenticator) { authenticators.push(await authenticator("usb")); return { authenticators: authenticators.length }; }
+  if (st.removeAuthenticator) { await s("WebAuthn.removeVirtualAuthenticator", { authenticatorId: authenticators.shift() }); return { authenticators: authenticators.length }; }
   throw new Error(`no such step: ${JSON.stringify(st)}`);
 }
 

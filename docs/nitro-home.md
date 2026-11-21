@@ -153,6 +153,9 @@ a CDP virtual authenticator (CTAP2, user verification).
 | `fragment login` approved at `/cli` by that session; `fragment init <app> --template todo` | logged in; deployed in 6.0 s |
 | The app's first visit, its certificate got on demand | 4.6 s; a made-up subdomain gets no certificate |
 | A todo item written, the home restarted, the item read back | **there**, the CLI's key still valid, the person still signed in |
+| A recovery code on a new device; the same code again | a new passkey; then refused |
+| A second device added, proved by the first; the first lost; sign-out and sign-in | signed in by the second device alone |
+| An invite for an email that has an account | refused |
 | KMS refused an image the policy did not name | refused, then released once its own PCR0 was pinned |
 | A canary written in the home, searched for in the disk files on the parent | data disk **0**; tmpfs 0; the control written to the plain scratch layer: 4,096 |
 
@@ -184,10 +187,13 @@ Outside the parent:
 
 - Computers: lane A's engine is not yet bridged into the home, so no agent
   ran here (acceptance 1 to 3 wait on it).
-- Adding a second passkey, and recovery by a code. Both are unit-tested
-  (store, flows, refusals), but neither ran end to end: one virtual
-  authenticator refuses to make a second credential for the same account
-  (`excludeCredentials`).
+- Adding a second passkey through its page's one button. Chrome attaches
+  every virtual authenticator to the ceremony, and one holding an excluded
+  credential refuses the whole `create()`. So the step ran end to end
+  through the door's own endpoints instead, as the page calls them: proved
+  by the first device's passkey, the first device removed, the new passkey
+  made on a second device. Signing out and in with the second device alone
+  then worked.
 - One run each; no load, no density, no x86 parent.
 - The home's ACME account is Let's Encrypt's production. Its rate limits
   were not hit: three certificates were issued for finite.house names today (the unused DNS-01 wildcard among them).

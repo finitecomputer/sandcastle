@@ -141,7 +141,9 @@ case "$HOME_ENGINE" in
     none) ;;
     bridge)
         mkdir -p /run/sandcastle
-        /usr/local/bin/sandcastle-bridge home > $LOG/bridge.log 2>&1 &
+        # celld's intercept socket, as celld names it for CELLD_NODE=home
+        # (`intercepts-` and the first 6 hex of the node's SHA-256)
+        /usr/local/bin/sandcastle-bridge home --intercepts $STATE/celld/intercepts-$(printf %s home | sha256sum | cut -c1-6).sock > $LOG/bridge.log 2>&1 &
         pids+=($!)
         for _ in $(seq 100); do [ -S /run/sandcastle/engine.sock ] && break; sleep 0.05; done
         engine=krun:/run/sandcastle/engine.sock ;;

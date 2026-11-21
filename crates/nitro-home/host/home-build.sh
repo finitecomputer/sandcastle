@@ -26,6 +26,10 @@ CELLD_REPO=https://github.com/futurepaul/celld
 CELLD_SHA=da094d8c9d1989b137b1e051aef32814fa94b38d
 MACROFICHE_REPO=https://github.com/futurepaul/macrofiche
 MACROFICHE_SHA=a18dc98e9e3abbec769344772edd72e933c396d6
+# sandcastle-bridge, the home's half of the container engine's vsock bridge
+# (lane A's, sandcastle's nitro/vsock-bridge line), for the image's glibc.
+BRIDGE_REPO=https://github.com/futurepaul/sandcastle
+BRIDGE_SHA=5427724
 OPENBAO_VERSION=2.7.2
 # openbao_2.7.2_linux_arm64.tar.gz in the release's checksums.txt, as
 # fragment's crates/devstack/src/openbao_release.rs pins it.
@@ -88,6 +92,11 @@ clone "$MACROFICHE_REPO" "$MACROFICHE_SHA" "$SRC/macrofiche"
 ( cd "$SRC/macrofiche" && cargo xtask engine > /dev/null && cargo build -q --release --locked -p macrofiche )
 cp "$SRC/macrofiche/target/release/macrofiche" "$OUT/bin/macrofiche"
 rm -rf "$OUT/git" && cp -a "$SRC/macrofiche/target/engine/git-2.55.0" "$OUT/git"
+
+say "sandcastle-bridge $BRIDGE_SHA"
+clone "$BRIDGE_REPO" "$BRIDGE_SHA" "$SRC/sandcastle-bridge"
+( cd "$SRC/sandcastle-bridge" && cargo build -q --release --locked -p sandcastle-engine --bin sandcastle-bridge )
+cp "$SRC/sandcastle-bridge/target/release/sandcastle-bridge" "$OUT/bin/sandcastle-bridge"
 
 say "the identity door, from fragment's tree"
 ( cd "$fragment" && cargo build -q --release --locked -p fragment-identity-door )
