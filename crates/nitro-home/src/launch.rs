@@ -199,20 +199,23 @@ fn disk(path: &Path, gib: u64, fresh: bool) -> Result<(), Failure> {
     f.set_len(gib << 30).map_err(|e| fail(&path.display().to_string(), e))
 }
 
-/// A fresh ext4 scratch disk (the overlay's upper layer).
+/// A fresh, bare scratch disk (the overlay's upper layer): the guest seals
+/// it under a key of its own and formats it inside, so the parent holds
+/// ciphertext alone.
 fn scratch(path: &Path, gib: u64) -> Result<(), Failure> {
-    disk(path, gib, true)?;
-    let out = Command::new("mkfs.ext4").args(["-q", "-F", "-E", "lazy_itable_init=1,lazy_journal_init=1"]).arg(path).output().map_err(|e| fail("mkfs", e))?;
-    if !out.status.success() {
-        return Err(Failure(format!("mkfs: {}", String::from_utf8_lossy(&out.stderr))));
-    }
-    Ok(())
+    disk(path, gib, true)
 }
 
 /// The sandbox the conf describes.
 pub fn sandbox(c: &Conf, img: &Image) -> Sandbox {
     Sandbox {
-        boot: Boot::Kernel { kernel: c.kernel.clone(), initrd: Some(c.initrd.clone()), cmdline: img.cmdline(Some(&c.kms_key), Root::Verity) },
+        // no door: the guest runs the image's own start (its measured
+        // root's start.json, not the start message's), and takes no exec
+        boot: Boot::Kernel {
+            kernel: c.kernel.clone(),
+            initrd: Some(c.initrd.clone()),
+            cmdline: format!("{} {} {}", img.cmdline(Some(&c.kms_key), Root::Verity), sandcastle_wire::AGENT_NONE_ARG, sandcastle_wire::START_IMAGE_ARG),
+        },
         vcpus: c.vcpus,
         memory_mib: c.memory_mib,
         drives: vec![
@@ -385,8 +388,9 @@ pub fn up(c: &Conf) -> Result<Option<i32>, Failure> {
         if STOP.load(Ordering::SeqCst) && stopping.is_none() {
             println!("{}", serde_json::json!({"home": "stopping", "at_ms": t0.elapsed().as_millis() as u64}));
             stopping = Some(Instant::now());
-            let p = Proc { argv: vec!["/bin/kill".into(), "-TERM".into(), "1".into()], env: vec![], cwd: Some("/".into()), user: None };
-            if let Err(e) = g.vm.exec(p, None) {
+            // a signal to the entrypoint: the one thing besides a ping a
+            // guest with no door takes from its host
+            if let Err(e) = g.vm.signal_entry(libc::SIGTERM) {
                 eprintln!("nitro-home: the graceful stop's SIGTERM: {e}");
             }
         }
@@ -482,6 +486,7 @@ mod tests {
         assert!(s.drives[0].read_only && s.drives[1].read_only && !s.drives[3].read_only);
         let Boot::Kernel { cmdline, .. } = &s.boot else { panic!("a kernel boot") };
         assert!(cmdline.contains("nitro.kms_key=test-key") && cmdline.contains("sandcastle.image=/dev/dm-0") && cmdline.contains(" verity "));
+        assert!(cmdline.contains(" sandcastle.agent=none") && cmdline.contains(" sandcastle.start=image"), "no door, its start the image's: {cmdline}");
         assert_eq!(s.enclave.mode, Mode::Confidential);
         assert!(!s.enclave.debug);
     }

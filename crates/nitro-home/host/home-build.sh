@@ -30,10 +30,20 @@ CELLD_SHA=2a159279faef1e48de01f73662f757426b9490df
 MACROFICHE_REPO=https://github.com/futurepaul/macrofiche
 MACROFICHE_SHA=a18dc98e9e3abbec769344772edd72e933c396d6
 # sandcastle-bridge, the home's half of the container engine's vsock bridge
-# (lane A's, sandcastle's nitro/attested-session line: each computer
-# reached over its attested session), for the image's glibc.
+# (lane A's, sandcastle's nitro/egress-in-session line: each computer
+# reached over its attested session, its egress through the home), for
+# the image's glibc.
+# The home's guest (its initrd's init): lane A's node line, with no door
+# (nitro/home-no-door: `sandcastle.agent=none` takes no exec, and
+# `sandcastle.start=image` runs the image's own start) and a sealed
+# scratch disk, which it formats with the static mke2fs beside it (lane
+# A's nitro/guest-mke2fs.sh build, pinned by its SHA-256).
+GUEST_REPO=https://github.com/futurepaul/sandcastle
+GUEST_SHA=422d586
+MKE2FS=${MKE2FS:-/opt/sandcastle/lib/nitro-mke2fs}
+MKE2FS_SHA256=6a7492a974ad2312961a0ce9ed831fcded4593d1570f7277c1c55f11b1db4ea2
 BRIDGE_REPO=https://github.com/futurepaul/sandcastle
-BRIDGE_SHA=5dcb0f3
+BRIDGE_SHA=5cc7537
 OPENBAO_VERSION=2.7.2
 # openbao_2.7.2_linux_arm64.tar.gz in the release's checksums.txt, as
 # fragment's crates/devstack/src/openbao_release.rs pins it.
@@ -77,10 +87,12 @@ fi
 cp "$HOME/nitro/home-kernel/out/Image" "$OUT/Image"
 cp "$HOME/nitro/home-kernel/out/kernel.json" "$OUT/kernel.json"
 
-say "sandcastle's guest (static, the initrd's init) and the home's helpers"
-( cd "$sandcastle" && cargo build -q --release --locked --target aarch64-unknown-linux-musl -p sandcastle-guest )
+say "the home's guest $GUEST_SHA (static, the initrd's init, no door) and the home's helpers"
+clone "$GUEST_REPO" "$GUEST_SHA" "$SRC/sandcastle-guest"
+( cd "$SRC/sandcastle-guest" && cargo build -q --release --locked --target aarch64-unknown-linux-musl -p sandcastle-guest )
+echo "$MKE2FS_SHA256  $MKE2FS" | sha256sum -c --quiet - || { echo "home-build: $MKE2FS is not the pinned mke2fs" >&2; exit 1; }
 ( cd "$sandcastle" && cargo build -q --release --locked -p sandcastle-nitro-spike -p sandcastle-nitro-home -p sandcastle-nitro-key )
-"$sandcastle/target/release/sandcastle-nitro-spike" initrd --init "$sandcastle/target/aarch64-unknown-linux-musl/release/sandcastle-guest" --out "$OUT/guest.initrd" > /dev/null
+"$sandcastle/target/release/sandcastle-nitro-spike" initrd --init "$SRC/sandcastle-guest/target/aarch64-unknown-linux-musl/release/sandcastle-guest" --mke2fs "$MKE2FS" --out "$OUT/guest.initrd" > /dev/null
 for b in nitro-key nitro-home-guest; do cp "$sandcastle/target/release/$b" "$OUT/bin/"; done
 cp "$sandcastle/target/release/nitro-home" "$OUT/nitro-home"
 
@@ -121,9 +133,9 @@ tar -xzf "$OUT/dl/esbuild.tgz" -C "$OUT/bin" --strip-components=2 package/bin/es
 
 fragment_sha=$(cat "$fragment/.source-sha" 2>/dev/null || git -C "$fragment" rev-parse HEAD)
 sandcastle_sha=$(git -C "$sandcastle" rev-parse HEAD 2>/dev/null || echo unknown)
-python3 -I - "$OUT" "$CELLD_SHA" "$MACROFICHE_SHA" "$fragment_sha" "$sandcastle_sha" "$OPENBAO_VERSION" "$CADDY_VERSION" "$ESBUILD_VERSION" > "$OUT/build.json" <<'PY'
+python3 -I - "$OUT" "$CELLD_SHA" "$MACROFICHE_SHA" "$fragment_sha" "$sandcastle_sha" "$OPENBAO_VERSION" "$CADDY_VERSION" "$ESBUILD_VERSION" "$GUEST_SHA" "$BRIDGE_SHA" "$MKE2FS_SHA256" > "$OUT/build.json" <<'PY'
 import hashlib, json, os, sys
-out, celld, macrofiche, fragment, sandcastle, bao, ts, esb = sys.argv[1:9]
+out, celld, macrofiche, fragment, sandcastle, bao, ts, esb, guest, bridge, mke2fs = sys.argv[1:12]
 def sha(p):
     return hashlib.sha256(open(p, "rb").read()).hexdigest()
 files = {}
@@ -131,6 +143,6 @@ for name in sorted(os.listdir(os.path.join(out, "bin"))):
     files["bin/" + name] = sha(os.path.join(out, "bin", name))
 for name in ("Image", "guest.initrd", "nitro-home"):
     files[name] = sha(os.path.join(out, name))
-print(json.dumps({"pins": {"celld": celld, "macrofiche": macrofiche, "fragment": fragment, "sandcastle": sandcastle, "openbao": bao, "caddy": ts, "esbuild": esb, "git": "2.55.0 (macrofiche's xtask engine)"}, "kernel": json.load(open(os.path.join(out, "kernel.json"))), "sha256": files}, indent=1))
+print(json.dumps({"pins": {"celld": celld, "macrofiche": macrofiche, "fragment": fragment, "sandcastle": sandcastle, "openbao": bao, "caddy": ts, "esbuild": esb, "guest": guest, "bridge": bridge, "mke2fs_sha256": mke2fs, "git": "2.55.0 (macrofiche's xtask engine)"}, "kernel": json.load(open(os.path.join(out, "kernel.json"))), "sha256": files}, indent=1))
 PY
 say "done: $OUT/build.json"

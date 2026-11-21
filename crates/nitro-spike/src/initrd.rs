@@ -22,9 +22,17 @@ pub const FILE_BYTES_MAX: usize = 64 << 20;
 /// The probe's initrd: `/init` and the mount points it uses, and
 /// `/dev/console` so the kernel can open init's console before devtmpfs.
 pub fn probe(init: &[u8]) -> Vec<u8> {
+    with_mke2fs(init, None)
+}
+
+/// `probe`'s archive, with a static `mke2fs` at `/mke2fs` when given: the
+/// node line's guest copies it out and formats its sealed scratch disk with
+/// it (sandcastle's `rootfs::initrd::guest`, the same entries).
+pub fn with_mke2fs(init: &[u8], mke2fs: Option<&[u8]>) -> Vec<u8> {
     assert!(!init.is_empty() && init.len() <= FILE_BYTES_MAX);
+    assert!(mke2fs.is_none_or(|m| !m.is_empty() && m.len() <= FILE_BYTES_MAX));
     let dir = |path| Entry { path, mode: DIR | 0o755, rdev: (0, 0), data: &[] };
-    newc(&[
+    let mut entries = vec![
         dir("dev"),
         Entry { path: "dev/console", mode: CHAR | 0o600, rdev: (5, 1), data: &[] },
         dir("proc"),
@@ -32,7 +40,11 @@ pub fn probe(init: &[u8]) -> Vec<u8> {
         dir("run"),
         dir("tmp"),
         Entry { path: "init", mode: FILE | 0o755, rdev: (0, 0), data: init },
-    ])
+    ];
+    if let Some(m) = mke2fs {
+        entries.push(Entry { path: "mke2fs", mode: FILE | 0o755, rdev: (0, 0), data: m });
+    }
+    newc(&entries)
 }
 
 fn pad4(out: &mut Vec<u8>) {
@@ -70,6 +82,18 @@ pub fn newc(entries: &[Entry<'_>]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Goal: a guest's initrd carries a static mke2fs at /mke2fs only when
+    // given one (the node line's guest formats its sealed scratch with it),
+    // and the archive without it is the probe's, byte for byte.
+    #[test]
+    fn mke2fs_only_when_given() {
+        let with = with_mke2fs(b"init", Some(b"mke2fs bytes"));
+        let without = with_mke2fs(b"init", None);
+        assert!(with.windows(7).any(|w| w == b"mke2fs\0") && with.windows(12).any(|w| w == b"mke2fs bytes"));
+        assert!(!without.windows(7).any(|w| w == b"mke2fs\0"));
+        assert_eq!(without, probe(b"init"));
+    }
 
     // Goal: the header is the kernel's newc layout. Method: one file, its
     // fields read back at their offsets.

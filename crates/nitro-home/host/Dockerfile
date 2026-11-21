@@ -19,4 +19,8 @@ COPY bin/ /usr/local/bin/
 COPY git/ /opt/macrofiche/git-2.55.0/
 COPY release/ /opt/fragment-home/release/
 COPY entry.sh /opt/fragment-home/entry.sh
+# no door (lane A's guest, `sandcastle.start=image`): the home's own start,
+# its sealed secrets and its computers' pins, all in the measured root
+COPY start.json /etc/sandcastle/start.json
+COPY sealed.json pins /opt/fragment-home/
 RUN chmod 0600 /opt/fragment-home/release/celld-secrets.json && chmod 0755 /opt/fragment-home/entry.sh

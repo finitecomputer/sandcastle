@@ -3,7 +3,7 @@
 
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: sandcastle-nitro-spike initrd --probe <nitro-probe> --out <initrd>
+const USAGE: &str = "usage: sandcastle-nitro-spike initrd --probe <nitro-probe> | --init <guest> [--mke2fs <static mke2fs>] --out <initrd>
   on the parent, as root (docs/nitro-spike.md):
        sandcastle-nitro-spike boot|canary|attest|release --kernel <Image> --initrd <initrd> [--cmdline <args>] [--mode confidential|direct] [--overcommit true] [--debug true] [--vcpus N] [--mem-mib N] ...";
 
@@ -52,7 +52,9 @@ fn run_initrd(args: &[String]) -> Result<(), String> {
     let probe = flag(args, "--init").or_else(|| flag(args, "--probe")).ok_or("--init is required")?;
     let out = flag(args, "--out").ok_or("--out is required")?;
     let init = std::fs::read(probe).map_err(|e| format!("{probe}: {e}"))?;
-    let archive = sandcastle_nitro_spike::initrd::probe(&init);
+    // `--mke2fs`: the node line's guest formats its sealed scratch with it
+    let mke2fs = flag(args, "--mke2fs").map(|m| std::fs::read(m).map_err(|e| format!("{m}: {e}"))).transpose()?;
+    let archive = sandcastle_nitro_spike::initrd::with_mke2fs(&init, mke2fs.as_deref());
     std::fs::write(out, &archive).map_err(|e| format!("{out}: {e}"))?;
     println!("{} {} bytes, sha256 {}", out, archive.len(), hex::encode(sandcastle_nitro_attest::sha256(&archive)));
     Ok(())

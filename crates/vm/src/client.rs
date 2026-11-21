@@ -189,6 +189,16 @@ impl Vm {
         }
     }
 
+    /// A signal to the workload's entrypoint (a guest with no door takes
+    /// this, a ping and a reclaim, and nothing else).
+    pub fn signal_entry(&self, signal: i32) -> Result<(), ClientError> {
+        let (_w, mut r) = self.open(&Request::Signal { signal })?;
+        match self.reply(&mut r)? {
+            Reply::Done => Ok(()),
+            other => Err(ClientError::Protocol(format!("{other:?} for a signal"))),
+        }
+    }
+
     /// The guest's uptime, through a round trip.
     pub fn ping(&self) -> Result<u64, ClientError> {
         let (_w, mut r) = self.open(&Request::Ping)?;

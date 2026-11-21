@@ -59,7 +59,10 @@ mkdir -p /run/fragment-home/celld
 nonce=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
 say "attestation nonce=$nonce document=$(/usr/local/bin/nitro-key attest --nonce "$nonce")"
 
-# 3. the bundle
+# 3. the bundle: the image's own (its measured root's), since the guest
+# runs this image's start and no environment the parent names
+export HOME_SEALED
+HOME_SEALED=$(cat /opt/fragment-home/sealed.json)
 wrapped=$(/usr/local/bin/nitro-home-guest wrapped)
 /usr/local/bin/nitro-key wake --wrapped "$wrapped" --out /run/fragment-home/bundle.key > /run/fragment-home/bundle.json || die "the bundle's key: KMS released nothing (is this image's PCR0 the key policy's?)"
 /usr/local/bin/nitro-home-guest open --key-file /run/fragment-home/bundle.key --out "$S" > /dev/null
@@ -153,14 +156,12 @@ case "$HOME_ENGINE" in
     bridge)
         mkdir -p /run/sandcastle $STATE/sessions
         # each computer is reached over its attested session alone (lane
-        # A's PR 6), claimed at its start against the PCR0s pinned here:
-        # one a line, kept on the encrypted disk, so a new image's pin is
-        # no reimage. A first boot pins nothing that starts: the bridge's
-        # log names the PCR0 it refused, and the operator pins it.
-        [ -f $STATE/pins ] || printf '%s\n' "# the PCR0 of each computer image this home runs, one a line" "$(printf '0%.0s' $(seq 96))" > $STATE/pins
+        # A's PR 6), claimed at its start against the PCR0s pinned in this
+        # image (measured: a new computer image's pin is a new home image,
+        # since nothing can exec into this home to change a file)
         # celld's intercept socket, as celld names it for CELLD_NODE=home
         # (`intercepts-` and the first 6 hex of the node's SHA-256)
-        /usr/local/bin/sandcastle-bridge home --intercepts $STATE/celld/intercepts-$(printf %s home | sha256sum | cut -c1-6).sock --sessions $STATE/sessions --pins $STATE/pins > $LOG/bridge.log 2>&1 &
+        /usr/local/bin/sandcastle-bridge home --intercepts $STATE/celld/intercepts-$(printf %s home | sha256sum | cut -c1-6).sock --sessions $STATE/sessions --pins /opt/fragment-home/pins > $LOG/bridge.log 2>&1 &
         pids+=($!)
         for _ in $(seq 100); do [ -S /run/sandcastle/engine.sock ] && break; sleep 0.05; done
         engine=krun:/run/sandcastle/engine.sock ;;
