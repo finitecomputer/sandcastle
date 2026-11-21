@@ -148,3 +148,24 @@ krun node.
 - **Capacity:** `memory_mib_max` is the operator's, sized to the pool
   less each sandbox's overheads (2 MiB and 16 MiB a device in confidential
   mode; the spike's line 10).
+
+## Evidence
+
+`docs/nitro-evidence/` holds one real run on a parent (an m8g.xlarge,
+Amazon Linux 2023, kernel 6.18): celld's engine conformance suite
+(`celld dev` with `CELLD_CONTAINER_ENGINE=krun:<engine.sock>`) against
+this engine in Nitro mode, every sandbox confidential.
+
+- `conformance-nitro.json`: 25 passed, 0 failed, 0 unsupported: start,
+  ports, exec (output, stdin, PTY and resize, kill, abort), signals,
+  HTTP and HTTPS intercepts (HTTPS needs the guest's NSM clock), snapshot
+  and start from a snapshot.
+- `engine-log.txt`: the engine's own lines for that run: the image's
+  build VM applying its five layers and ending, then each sandbox's start
+  (ready in about 500 ms) and end.
+
+The run found three bugs, each fixed in the PR that owns it: the guest
+rebooted where Nitro's Firecracker ends only on a power-off (the guest),
+Firecracker's vsock dropped a host's close so a build's guest waited on
+a closed connection (the runner), and a build whose client went away
+left its build VM running and the build lock held (the engine).

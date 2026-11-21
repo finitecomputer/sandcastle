@@ -1,0 +1,23 @@
+sandcastle-engine: serving on /var/lib/sandcastle-engine/engine.sock and /var/lib/sandcastle-engine/ports.sock
+sandcastle-engine: build:0d72e4441afa: ready; 5 layer(s) to apply
+sandcastle-engine: build:0d72e4441afa: layer 1 of 5 (8939008 bytes) applied in 23 ms
+sandcastle-engine: build:0d72e4441afa: layer 2 of 5 (1650176 bytes) applied in 19 ms
+sandcastle-engine: build:0d72e4441afa: layer 3 of 5 (44887040 bytes) applied in 84 ms
+sandcastle-engine: build:0d72e4441afa: layer 4 of 5 (5120 bytes) applied in 1 ms
+sandcastle-engine: build:0d72e4441afa: layer 5 of 5 (4608 bytes) applied in 1 ms
+sandcastle-engine: build:0d72e4441afa: the build VM ended exit status: 0
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: started in slot 0
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: ready in 750 ms
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: ended {"code":null,"signal":9,"destroyed":true,"error":null}
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: started in slot 0
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: ready in 514 ms
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: ended {"code":null,"signal":9,"destroyed":true,"error":null}
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: started in slot 0
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: ready in 504 ms
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: ended {"code":3,"signal":null,"destroyed":false,"error":null}
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: started in slot 0
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: ready in 502 ms
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: ended {"code":42,"signal":null,"destroyed":false,"error":null}
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: started in slot 0
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: ready in 504 ms
+sandcastle-engine: celld-5c2cb3-8502b31c65ae3d1df: ended {"code":null,"signal":9,"destroyed":true,"error":null}
