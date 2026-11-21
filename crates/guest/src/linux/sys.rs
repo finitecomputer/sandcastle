@@ -172,10 +172,15 @@ pub fn mem_free_kib() -> u64 {
 /// libkrun ends the runner's process on it. On arm64 the reset is PSCI's
 /// SYSTEM_RESET, which KVM hands libkrun as a system event, its end too.
 pub fn poweroff() -> ! {
+    // libkrun ends its VM on the guest's reboot. A Nitro Sandbox's
+    // Firecracker ends on a power-off and not on a reboot (the build VM
+    // that rebooted never ended), so a guest that left an initrd (only a
+    // Nitro Sandbox boots from one) powers off (docs/nitro.md).
+    let nitro = std::env::args().any(|a| a == MOVED_ARG);
     // SAFETY: sync and reboot(2) as PID 1.
     unsafe {
         libc::sync();
-        libc::reboot(libc::RB_AUTOBOOT);
+        libc::reboot(if nitro { libc::RB_POWER_OFF } else { libc::RB_AUTOBOOT });
     }
     // Bounded: the power-off takes effect within the call above; this only
     // keeps PID 1 from returning (which would panic the kernel) if it did not.
