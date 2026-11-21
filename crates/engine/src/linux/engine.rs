@@ -713,18 +713,34 @@ impl Engine {
             };
             let mut l = self.launch(slot, &vm_config, &cg).await?;
             wait_event(&mut l, "ready").await?;
-            let (dir2, layers2, blobs2) = (run_dir.clone(), layers.to_vec(), blobs.to_vec());
+            // A build's steps are lines in the engine's log: a node's
+            // operator sees which one a slow or stuck build is at.
+            eprintln!("sandcastle-engine: {name}: ready; {} layer(s) to apply", layers.len());
+            let (dir2, layers2, blobs2, name2) = (run_dir.clone(), layers.to_vec(), blobs.to_vec(), name.clone());
             let streamed = tokio::task::spawn_blocking(move || -> Result<u64, String> {
                 let c = AgentClient::new(&dir2);
-                for (l, p) in layers2.iter().zip(&blobs2) {
+                for (i, (l, p)) in layers2.iter().zip(&blobs2).enumerate() {
                     let f = std::fs::File::open(p).map_err(|e| e.to_string())?;
+                    let t = Instant::now();
                     c.layer(&l.media_type, &l.digest.to_string(), l.size, f).map_err(|e| format!("layer {}: {e}", l.digest))?;
+                    eprintln!("sandcastle-engine: {name2}: layer {} of {} ({} bytes) applied in {} ms", i + 1, layers2.len(), l.size, t.elapsed().as_millis());
                 }
                 c.finish().map_err(|e| e.to_string())
             })
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
+            // A stream that failed leaves the build's guest waiting for more:
+            // end its VM, or this waits on it forever (holding every later
+            // load behind the build lock).
+            if streamed.is_err() {
+                let dir = run_dir.clone();
+                let _ = tokio::task::spawn_blocking(move || AgentClient::new(&dir).control(&ControlRequest::Kill)).await;
+            }
+            if let Err(e) = &streamed {
+                eprintln!("sandcastle-engine: {name}: streaming failed: {e}");
+            }
             let status = l.child.wait().await.map_err(internal("waiting for a build"))?;
+            eprintln!("sandcastle-engine: {name}: the build VM ended {status}");
             streamed.map_err(|e| ApiError::Internal(format!("{reference}: {e}")))?;
             if !status.success() {
                 return Err(ApiError::Internal(runner_said(&l, &format!("{reference}: the build VM ended {status}"))));
