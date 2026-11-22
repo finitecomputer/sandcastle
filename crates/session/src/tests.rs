@@ -255,3 +255,31 @@ fn a_claimed_guest_dials_its_home() {
     home.write_all(&Hello { kind: Kind::Egress, nonce: [8; NONCE_BYTES] }.encode()).unwrap();
     assert!(matches!(guest.accept(carrier, document_for(&guest)), Err(SessionError::Hello)));
 }
+
+// Goal: reading a guest's document claims nothing. The document is the
+// guest's for the reader's nonce, and the guest's home claims it after,
+// as if no one had read it.
+#[test]
+fn a_read_document_leaves_the_guest_open() {
+    let guest = Arc::new(Guest::new().unwrap());
+    for i in 0..2u8 {
+        let (reader, carrier) = UnixStream::pair().unwrap();
+        let served = serve_one(guest.clone(), carrier);
+        let doc = document(reader, [i; NONCE_BYTES]).unwrap();
+        assert_eq!(verify_for([i; NONCE_BYTES])(&doc).unwrap(), guest.public_key());
+        assert!(served.join().unwrap().is_err(), "the reader closed before any handshake");
+        assert!(!guest.claimed());
+    }
+    let (home, carrier) = UnixStream::pair().unwrap();
+    let served = serve_one(guest.clone(), carrier);
+    let (session, _) = attest(home, [8; NONCE_BYTES], [9; KEY_BYTES], b"{}", verify_for([8; NONCE_BYTES])).unwrap();
+    assert_eq!(round_trip(session, b"home"), b"HOME");
+    served.join().unwrap().unwrap();
+    assert!(guest.claimed());
+
+    // A claimed guest answers a reader with no document at all.
+    let (reader, carrier) = UnixStream::pair().unwrap();
+    let served = serve_one(guest.clone(), carrier);
+    assert!(document(reader, [1; NONCE_BYTES]).is_err());
+    assert!(served.join().unwrap().unwrap_err().contains("claimed already"));
+}

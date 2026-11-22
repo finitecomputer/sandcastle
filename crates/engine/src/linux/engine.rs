@@ -68,6 +68,32 @@ pub struct ImageMeta {
     /// sandbox's measured kernel line names (docs/nitro.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verity: Option<MeasuredRoot>,
+    /// On a session node: the PCR0 this node's boot gives the image, once
+    /// measured (`Engine::measure`). Never stored with the image, so a new
+    /// boot (its kernel, initrd or measured words) shows none until
+    /// measured again.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub pcr0: Option<String>,
+}
+
+/// A measure's record beside its image: the boot it was measured on, and
+/// the PCR0 it read.
+#[derive(Serialize, Deserialize)]
+struct MeasuredPcr0 {
+    boot: String,
+    pcr0: String,
+}
+
+const PCR0_FILE: &str = "pcr0.json";
+/// A measure's sandbox: the least a guest boots in, with room.
+const MEASURE_INSTANCE: &str = "basic";
+
+/// A measure's answer: the image's PCR0 on this node's boot, and the
+/// document of AWS's that says so, for the caller's nonce (hex).
+#[derive(Serialize, Debug)]
+pub struct Measured {
+    pub pcr0: String,
+    pub document: String,
 }
 
 /// An image's root as a Nitro Sandbox boots it: its hash tree's file and
@@ -85,6 +111,28 @@ pub struct MeasuredRoot {
 struct NitroBoot {
     initrd: PathBuf,
     empty: PathBuf,
+    /// What every image's PCR0 here is a function of, beside the image's
+    /// own root (`boot_id`).
+    boot: String,
+}
+
+/// A digest of what a node's boot measures besides an image's root: the
+/// guest kernel, the initrd, the kernel line's words (Firecracker's, the
+/// session's, the node's tunings) and the sandbox's mode. Two boots with
+/// one id give an image one PCR0; a measure is kept for its boot's id.
+fn boot_id(kernel: &[u8], initrd: &[u8], session: bool, confidential: bool, kernel_args: &[String]) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(b"sandcastle nitro boot 1\0");
+    h.update(sha2::Sha256::digest(kernel));
+    h.update(sha2::Sha256::digest(initrd));
+    h.update(sandcastle_vm::config::NITRO_BOOT_ARGS.as_bytes());
+    h.update([0, session as u8, confidential as u8]);
+    for a in kernel_args {
+        h.update(b"\0");
+        h.update(a.as_bytes());
+    }
+    hex::encode(h.finalize())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,6 +240,8 @@ pub struct Engine {
     nitro: Option<NitroBoot>,
     inner: Mutex<Inner>,
     builds: tokio::sync::Mutex<()>,
+    /// One measure at a time: each boots a sandbox.
+    measures: tokio::sync::Mutex<()>,
     sockets: super::ports::NetnsSockets,
 }
 
@@ -338,7 +388,9 @@ impl Engine {
                 if !empty.exists() {
                     write_atomic(&empty, &[0u8; 4096]).map_err(internal("a build's empty disk"))?;
                 }
-                Some(NitroBoot { initrd, empty })
+                let kernel = std::fs::read(c.lib_dir.join(&n.kernel)).map_err(internal("the guest kernel"))?;
+                let boot = boot_id(&kernel, &archive, n.session_required, n.confidential, &c.kernel_args);
+                Some(NitroBoot { initrd, empty, boot })
             }
         };
         if nitro.is_none() && !boot_disk.exists() {
@@ -357,6 +409,7 @@ impl Engine {
             boot_disk,
             nitro,
             builds: tokio::sync::Mutex::new(()),
+            measures: tokio::sync::Mutex::new(()),
             sockets: super::ports::NetnsSockets::start().map_err(internal("the sockets thread"))?,
         };
         engine.sweep_snapshots();
@@ -518,11 +571,71 @@ impl Engine {
     fn image_by_digest(&self, digest: &str) -> Result<ImageMeta, ApiError> {
         let meta = self.image_dir(digest).join("image.json");
         let bytes = std::fs::read(&meta).map_err(|_| ApiError::NotFound(format!("no image {digest} on this node")))?;
-        let m: ImageMeta = serde_json::from_slice(&bytes).map_err(|e| ApiError::Internal(e.to_string()))?;
+        let mut m: ImageMeta = serde_json::from_slice(&bytes).map_err(|e| ApiError::Internal(e.to_string()))?;
         if !m.root.exists() {
             return Err(ApiError::NotFound(format!("image {digest}'s disk is gone")));
         }
+        m.pcr0 = self.measured_pcr0(digest);
         Ok(m)
+    }
+
+    /// The PCR0 a measure kept for the image, if it was this boot's.
+    fn measured_pcr0(&self, digest: &str) -> Option<String> {
+        let boot = &self.nitro.as_ref()?.boot;
+        let bytes = std::fs::read(self.image_dir(digest).join(PCR0_FILE)).ok()?;
+        let m: MeasuredPcr0 = serde_json::from_slice(&bytes).ok()?;
+        (m.boot == *boot).then_some(m.pcr0)
+    }
+
+    /// The image `reference` names, if the node holds it: never pulled.
+    pub fn held_image(&self, reference: &str) -> Result<ImageMeta, ApiError> {
+        let named = self.inner.lock().expect("never poisoned").refs.get(reference).cloned();
+        let mut m = named
+            .or_else(|| pinned_digest(reference))
+            .and_then(|d| self.image_by_digest(&d).ok())
+            .ok_or_else(|| ApiError::NotFound(format!("no image {reference} on this node")))?;
+        m.reference = reference.to_string();
+        Ok(m)
+    }
+
+    /// The PCR0 this node's boot gives the held image `reference`, read
+    /// from a sandbox of it: booted with no network, its guest's document
+    /// read for `nonce` over its session port and checked to AWS's root,
+    /// then the sandbox destroyed. The image's own process never starts: a
+    /// session guest waits for its home's claim first, and none comes. The
+    /// PCR0 is kept beside the image, shown by `GET /v1/images/<ref>` until
+    /// the boot changes (docs/nitro.md, "Measuring an image").
+    pub async fn measure(self: &Arc<Self>, reference: &str, nonce: [u8; 32]) -> Result<Measured, ApiError> {
+        let session_node = self.config.nitro.as_ref().is_some_and(|n| n.session_required);
+        let Some(boot) = self.nitro.as_ref().map(|b| b.boot.clone()).filter(|_| session_node) else {
+            return Err(ApiError::Invalid("this node's computers take no attested session: it measures no image".into()));
+        };
+        let image = self.held_image(reference)?;
+        let _one = self.measures.lock().await;
+        let name = format!("measure-{}", hex::encode(&random16().map_err(internal("a name"))?[..6]));
+        let req = StartRequest { image: Some(reference.to_string()), instance: Some(api::Instance::Named(MEASURE_INSTANCE.into())), ..StartRequest::default() };
+        let read = match self.start_timed(&name, req, true).await.and_then(|_| self.session_socket(&name)) {
+            Ok(at) => tokio::task::spawn_blocking(move || {
+                let s = std::os::unix::net::UnixStream::connect(&at)?;
+                sandcastle_session::document(s, nonce)
+            })
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))
+            .and_then(|r| r.map_err(|e| ApiError::Internal(format!("{reference}'s document: {e}")))),
+            Err(e) => Err(e),
+        };
+        // Not the answer's wait: a Nitro Sandbox's end takes seconds.
+        let engine = self.clone();
+        tokio::spawn(async move {
+            let _ = engine.destroy(&name, None).await;
+        });
+        let doc = read?;
+        let trust = sandcastle_nitro_attest::Trust::aws_nitro_enclaves_root_g1();
+        let attested = sandcastle_nitro_attest::verify(&trust, &doc, &nonce, now_ms()).map_err(|e| ApiError::Internal(format!("{reference}'s document: {e}")))?;
+        let pcr0 = hex::encode(attested.pcr(0).ok_or_else(|| ApiError::Internal(format!("{reference}'s document has no PCR0")))?);
+        let record = serde_json::to_vec(&MeasuredPcr0 { boot, pcr0: pcr0.clone() }).expect("serializes");
+        write_atomic(&self.image_dir(&image.digest).join(PCR0_FILE), &record).map_err(internal("the image's PCR0"))?;
+        Ok(Measured { pcr0, document: hex::encode(doc) })
     }
 
     /// Every reference the node holds, each with its image: one image
@@ -807,6 +920,7 @@ impl Engine {
             layers: layers.len(),
             build_ms: t.elapsed().as_millis() as u64,
             verity,
+            pcr0: None,
         };
         write_atomic(&dir.join("image.json"), &serde_json::to_vec_pretty(&meta).expect("serializes")).map_err(internal("image.json"))?;
         Ok(meta)
@@ -1687,5 +1801,49 @@ mod sealed_tests {
         assert!(matches!(sealed_refusal(&from_snapshot), Some(ApiError::Invalid(m)) if m.contains("sealed")));
         let with_data = req(serde_json::json!({ "data": { "name": "d", "path": "/data", "gib": 1 } }));
         assert!(matches!(sealed_refusal(&with_data), Some(ApiError::Invalid(m)) if m.contains("data disk")));
+    }
+}
+
+#[cfg(test)]
+mod measure_tests {
+    use super::*;
+
+    /// Goal: a boot's id changes with each thing a PCR0 measures besides
+    /// the image (the kernel, the initrd, the session word, the mode, each
+    /// tuning word), and only with those; so a measure kept under one id is
+    /// never shown for another boot.
+    #[test]
+    fn a_boot_id_follows_what_is_measured() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let base = boot_id(b"kernel", b"initrd", true, true, &args(&["a=1"]));
+        assert_eq!(base, boot_id(b"kernel", b"initrd", true, true, &args(&["a=1"])));
+        let others = [
+            boot_id(b"kernel2", b"initrd", true, true, &args(&["a=1"])),
+            boot_id(b"kernel", b"initrd2", true, true, &args(&["a=1"])),
+            boot_id(b"kernel", b"initrd", false, true, &args(&["a=1"])),
+            boot_id(b"kernel", b"initrd", true, false, &args(&["a=1"])),
+            boot_id(b"kernel", b"initrd", true, true, &args(&["a=2"])),
+            boot_id(b"kernel", b"initrd", true, true, &args(&["a=1", "b"])),
+            boot_id(b"kernel", b"initrd", true, true, &args(&["a=1b"])),
+        ];
+        for (i, o) in others.iter().enumerate() {
+            assert_ne!(&base, o, "change {i}");
+        }
+        assert_ne!(boot_id(b"k", b"i", true, true, &args(&["a", "b"])), boot_id(b"k", b"i", true, true, &args(&["a b"])));
+    }
+
+    /// Goal: an image's PCR0 is never read back from its stored record: a
+    /// record written with one (or edited to hold one) reads as none, and
+    /// only a measure's own file, for this boot, gives it.
+    #[test]
+    fn a_pcr0_is_not_stored_with_its_image() {
+        let v = serde_json::json!({
+            "reference": "r", "digest": "sha256:00", "config": {}, "root": "/x",
+            "compressedBytes": 1, "layers": 1, "buildMs": 1, "pcr0": "ab"
+        });
+        let m: ImageMeta = serde_json::from_value(v).unwrap();
+        assert_eq!(m.pcr0, None);
+        let shown = serde_json::to_value(ImageMeta { pcr0: Some("cd".into()), ..m }).unwrap();
+        assert_eq!(shown["pcr0"], "cd");
     }
 }
