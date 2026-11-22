@@ -57,3 +57,19 @@ by a temporary home half of lane A's own):
 No `ended` for it until its destroy, 0 restarts of the engine's unit; after
 the destroy, no computer and no `vm-` cgroup were left, and the home was
 still active.
+
+## A reboot of the shared parent (S2), beside the real home
+
+Lane B rebooted the parent that runs the owner's home (no computer
+running). Everything came back by itself: the home answered again 25 s
+after the reboot (lane B's check, its owner's counts unchanged), and 34 s
+after it:
+
+| | After the reboot |
+|---|---|
+| the units | `sandcastle-vms`, `sandcastle-engine`, `nitro-home` active, 0 restarts each |
+| the VMs' cgroup | the keeper in `sandcastle-vms.service/keeper`, handing out `cpu memory pids` |
+| the device and the pool | `/dev/nitro_enclaves` 0660 in group `nitro`; `nitro_enclaves.mempool=22G@0` on the kernel's line |
+| the engine | "recovered {adopted: [], cleared: []}", serving; 0 VMs, 0 of 17,000 MiB |
+| a computer of lane A's (the Hermes image, 6 GiB, a temporary home half) | started in 1,200 ms; exec over its session answered (2 CPUs) |
+| after its destroy | no computer and no `vm-` cgroup left; the home active |
