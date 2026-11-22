@@ -78,6 +78,10 @@ pub struct Home {
     /// Where a home on the parent itself takes its computers' egress
     /// sessions (the engine's `nitro.session_egress`), in place of vsock 5003.
     pub egress_at: Option<PathBuf>,
+    /// Engines on other parents this home also drives, by name, each
+    /// reached over the network (docs/nitro.md, "Computers on other
+    /// parents"). Sessions only.
+    pub remotes: Vec<(String, End)>,
 }
 
 /// The parent's half.
@@ -97,6 +101,125 @@ pub struct Parent {
     /// Where the engine hands its computers' egress sessions
     /// (`NitroConfig::session_egress`), each carried into the home.
     pub egress: Option<PathBuf>,
+}
+
+/// One end of a relay between machines: a unix socket's path, or a TCP
+/// address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum End {
+    Unix(PathBuf),
+    Tcp(std::net::SocketAddr),
+}
+
+impl std::str::FromStr for End {
+    type Err = String;
+    fn from_str(s: &str) -> Result<End, String> {
+        match s.split_once(':') {
+            Some(("unix", p)) if p.starts_with('/') => Ok(End::Unix(p.into())),
+            Some(("tcp", a)) => a.parse().map(End::Tcp).map_err(|e| format!("{s}: {e}")),
+            _ => Err(format!("{s}: unix:/<path> or tcp:<address>:<port>")),
+        }
+    }
+}
+
+/// An address range a TCP relay takes connections from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cidr {
+    net: std::net::IpAddr,
+    bits: u8,
+}
+
+impl std::str::FromStr for Cidr {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Cidr, String> {
+        let (addr, bits) = s.split_once('/').unwrap_or((s, ""));
+        let net: std::net::IpAddr = addr.parse().map_err(|e| format!("{s}: {e}"))?;
+        let max = if net.is_ipv4() { 32 } else { 128 };
+        let bits = if bits.is_empty() { max } else { bits.parse::<u8>().ok().filter(|b| *b <= max).ok_or_else(|| format!("{s}: a prefix of 0 to {max}"))? };
+        Ok(Cidr { net, bits })
+    }
+}
+
+impl Cidr {
+    pub fn contains(&self, ip: std::net::IpAddr) -> bool {
+        let ip = match ip {
+            std::net::IpAddr::V6(v6) => v6.to_ipv4_mapped().map(std::net::IpAddr::V4).unwrap_or(ip),
+            v4 => v4,
+        };
+        let (a, b, len): (u128, u128, u32) = match (self.net, ip) {
+            (std::net::IpAddr::V4(n), std::net::IpAddr::V4(i)) => (u32::from(n) as u128, u32::from(i) as u128, 32),
+            (std::net::IpAddr::V6(n), std::net::IpAddr::V6(i)) => (u128::from(n), u128::from(i), 128),
+            _ => return false,
+        };
+        let shift = len - self.bits as u32;
+        shift >= len || (a >> shift) == (b >> shift)
+    }
+}
+
+/// A relay between machines (docs/nitro.md, "Computers on other parents"):
+/// each connection to `listen` carried to `to` as its bytes come. A TCP
+/// listener takes connections only from `allow`.
+#[derive(Debug, Clone)]
+pub struct Relay {
+    pub listen: End,
+    pub to: End,
+    pub allow: Vec<Cidr>,
+    pub owner: Option<(u32, u32)>,
+}
+
+/// How long a relay waits for the far end to take a connection.
+const DIAL_WAIT: Duration = Duration::from_secs(5);
+
+/// A connected stream to `end`, as the bridge's other streams are.
+pub fn dial(end: &End) -> io::Result<UnixStream> {
+    match end {
+        End::Unix(p) => UnixStream::connect(p),
+        End::Tcp(a) => {
+            let s = std::net::TcpStream::connect_timeout(a, DIAL_WAIT).map_err(|e| io::Error::new(e.kind(), format!("{a}: {e}")))?;
+            s.set_nodelay(true)?;
+            Ok(UnixStream::from(OwnedFd::from(s)))
+        }
+    }
+}
+
+/// Serves a relay until the process ends.
+pub fn relay(r: Relay) -> io::Result<()> {
+    let (tx, ended) = mpsc::channel();
+    let to = r.to.clone();
+    let carry = move |c: UnixStream| {
+        splice(c, dial(&to)?);
+        Ok(())
+    };
+    eprintln!("sandcastle-bridge: relay: {:?} to {:?}", r.listen, r.to);
+    match &r.listen {
+        End::Unix(p) => {
+            let l = bind_unix(p, r.owner, 0o660)?;
+            serving("relay", &tx, move || accept_unix(&l), carry)?;
+        }
+        End::Tcp(a) => {
+            if r.allow.is_empty() {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "a TCP relay names the addresses it takes (--allow)"));
+            }
+            let l = std::net::TcpListener::bind(a)?;
+            let allow = r.allow.clone();
+            serving("relay", &tx, move || accept_tcp(&l, &allow), carry)?;
+        }
+    }
+    drop(tx);
+    wait(ended)
+}
+
+/// The next connection from an allowed address; any other is closed.
+fn accept_tcp(l: &std::net::TcpListener, allow: &[Cidr]) -> io::Result<UnixStream> {
+    // Bounded by the listener's life: each refused peer is closed at once.
+    loop {
+        let (s, peer) = l.accept()?;
+        if allow.iter().any(|c| c.contains(peer.ip())) {
+            s.set_nodelay(true)?;
+            return Ok(UnixStream::from(OwnedFd::from(s)));
+        }
+        eprintln!("sandcastle-bridge: relay: {} is not an allowed address; closed", peer.ip());
+    }
 }
 
 /// Serves the home's half until the process ends.
@@ -121,6 +244,12 @@ pub fn home(h: Home) -> io::Result<()> {
         },
         if h.sessions.is_some() { "exec and ports over each computer's attested session" } else { "no sessions" }
     );
+    if !h.remotes.is_empty() && h.sessions.is_none() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "engines on other parents take a home of sessions (--sessions)"));
+    }
+    for (name, end) in &h.remotes {
+        eprintln!("sandcastle-bridge: home: engine {name} at {end:?}");
+    }
     let cid = h.cid;
     let (tx, ended) = mpsc::channel();
     let up_engine: super::home::Up = match h.up.clone() {
@@ -132,8 +261,12 @@ pub fn home(h: Home) -> io::Result<()> {
         None => Arc::new(move || vsock_connect(cid, PORT_PORTS)),
     };
     if let Some((state, pins)) = &h.sessions {
-        let up = up_engine.clone();
-        let sessions = Arc::new(super::home::Sessions::open(state, pins, up)?);
+        let mut engines = vec![super::home::EngineAt { name: "local".into(), up: up_engine.clone() }];
+        for (name, end) in &h.remotes {
+            let end = end.clone();
+            engines.push(super::home::EngineAt { name: name.clone(), up: Arc::new(move || dial(&end)) });
+        }
+        let sessions = Arc::new(super::home::Sessions::open(state, pins, engines)?);
         let ended_tx = Ended("engine", tx.clone());
         let for_engine = sessions.clone();
         std::thread::Builder::new().name("bridge-engine".into()).spawn(move || {
@@ -574,5 +707,70 @@ mod tests {
         assert_eq!(bind_unix(&file, None, 0o600).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(std::fs::read(&file).unwrap(), b"not a socket");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod relay_tests {
+    use super::*;
+
+    // Goal: a relay's ends and ranges read as written, and nothing else:
+    // a range takes its own addresses (an IPv4 one as IPv6 maps it too),
+    // and no other.
+    #[test]
+    fn ends_and_ranges_read_as_written() {
+        assert_eq!("unix:/run/x.sock".parse::<End>(), Ok(End::Unix("/run/x.sock".into())));
+        assert_eq!("tcp:10.0.1.5:5100".parse::<End>(), Ok(End::Tcp("10.0.1.5:5100".parse().unwrap())));
+        for bad in ["unix:run/x", "tcp:10.0.1.5", "udp:10.9.9.9:5", "/run/x.sock", ""] {
+            assert!(bad.parse::<End>().is_err(), "{bad}");
+        }
+        let vpc: Cidr = "10.0.0.0/16".parse().unwrap();
+        assert!(vpc.contains("10.0.200.7".parse().unwrap()));
+        assert!(vpc.contains("::ffff:10.0.3.4".parse().unwrap()));
+        assert!(!vpc.contains("10.1.0.1".parse().unwrap()));
+        assert!(!vpc.contains("fd00::1".parse().unwrap()));
+        let one: Cidr = "10.0.1.5".parse().unwrap();
+        assert!(one.contains("10.0.1.5".parse().unwrap()) && !one.contains("10.0.1.6".parse().unwrap()));
+        assert!("0.0.0.0/0".parse::<Cidr>().unwrap().contains("10.200.0.1".parse().unwrap()));
+        assert!("fd00::/8".parse::<Cidr>().unwrap().contains("fd12::1".parse().unwrap()));
+        for bad in ["10.0.0.0/33", "fd00::/129", "10.0.0/8", "x"] {
+            assert!(bad.parse::<Cidr>().is_err(), "{bad}");
+        }
+    }
+
+    // Goal: a TCP relay closes a connection from an address it does not
+    // allow, and carries an allowed one's bytes both ways.
+    #[test]
+    fn a_tcp_relay_takes_only_its_ranges() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let at = l.local_addr().unwrap();
+        let (echo, far) = UnixStream::pair().unwrap();
+        std::thread::spawn(move || {
+            let allow: [Cidr; 1] = ["127.0.0.1/32".parse().unwrap()];
+            let c = accept_tcp(&l, &allow).unwrap();
+            splice(c, far);
+        });
+        std::thread::spawn(move || {
+            let mut echo = echo;
+            let mut b = [0u8; 5];
+            echo.read_exact(&mut b).unwrap();
+            echo.write_all(&b.to_ascii_uppercase()).unwrap();
+        });
+        let mut c = dial(&End::Tcp(at)).unwrap();
+        c.write_all(b"hello").unwrap();
+        let mut back = [0u8; 5];
+        c.read_exact(&mut back).unwrap();
+        assert_eq!(&back, b"HELLO");
+
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let at = l.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let allow: [Cidr; 1] = ["10.0.0.0/8".parse().unwrap()];
+            let _ = accept_tcp(&l, &allow);
+        });
+        let mut c = dial(&End::Tcp(at)).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut b = [0u8; 1];
+        assert_eq!(c.read(&mut b).unwrap_or(0), 0, "closed, never carried");
     }
 }

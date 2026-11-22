@@ -16,6 +16,14 @@
 //! - **everything else** (stop, kill, list, images, intercepts, logs) goes
 //!   to the parent's engine as before: the parent keeps start, stop, kill.
 //!
+//! **Several engines** (docs/nitro.md, "Computers on other parents"): a
+//! home may drive engines on other parents too, each over the network.
+//! A start goes to the first engine, in the home's order (its own
+//! parent's first), that holds its image and whose memory takes it; each
+//! computer's calls then go to its engine. The list and health are every
+//! engine's; the images are those every engine that answers holds, and a
+//! load goes to each.
+//!
 //! The credentials are kept in the home's own state directory, so a
 //! computer kept running through a home restart is still the home's.
 //!
@@ -47,8 +55,19 @@ use sandcastle_vm::client::{ClientError, Vm as AgentClient};
 use crate::api::{self, ApiError, ExecRequest};
 use crate::ports::{self, send_with_fd};
 
-/// A fresh stream to the parent's engine API (the bridge's port 5000).
+/// A fresh stream to an engine's API: the parent's (the bridge's port
+/// 5000), or another parent's over the network.
 pub type Up = Arc<dyn Fn() -> io::Result<UnixStream> + Send + Sync>;
+
+/// One engine a home drives: its name in logs and health, and its API.
+#[derive(Clone)]
+pub struct EngineAt {
+    pub name: String,
+    pub up: Up,
+}
+
+/// Engines a home drives, at most.
+pub const ENGINES_MAX: usize = 16;
 
 /// PCR0s a home accepts, at most.
 pub const PINS_MAX: usize = 64;
@@ -75,6 +94,8 @@ const EXEC_START_WAIT: Duration = Duration::from_secs(30);
 const UNPINNED_WAIT: Duration = Duration::from_secs(90);
 /// How often a waiting start reads the pins again.
 const PINS_LOOK: Duration = Duration::from_secs(2);
+/// A load's frames on their way to one engine, at most.
+const LOAD_FRAMES_QUEUED: usize = 4;
 
 type Body = BoxBody<Bytes, hyper::Error>;
 
@@ -96,7 +117,11 @@ pub struct Sessions {
     held: Mutex<BTreeSet<String>>,
     state: PathBuf,
     credentials: Mutex<BTreeMap<String, Credential>>,
-    up: Up,
+    /// The engines, its own parent's first.
+    engines: Vec<EngineAt>,
+    /// Which engine each computer runs on: set by its start, found again
+    /// by asking each engine after a home restart, dropped by its destroy.
+    placed: Mutex<BTreeMap<String, usize>>,
     ca: Arc<sandcastle_egress::ca::Ca>,
     egress: Mutex<BTreeMap<String, Kept>>,
     node_addrs: Vec<std::net::IpAddr>,
@@ -129,7 +154,14 @@ struct KeptEgress {
 impl Sessions {
     /// The pins from `pins` (one PCR0 in hex a line, `#` comments), the
     /// credentials kept in `state` before.
-    pub fn open(state: &Path, pins: &Path, up: Up) -> io::Result<Sessions> {
+    pub fn open(state: &Path, pins: &Path, engines: Vec<EngineAt>) -> io::Result<Sessions> {
+        if engines.is_empty() || engines.len() > ENGINES_MAX {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("1 to {ENGINES_MAX} engines")));
+        }
+        let names: BTreeSet<&str> = engines.iter().map(|e| e.name.as_str()).collect();
+        if names.len() != engines.len() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "each engine its own name"));
+        }
         let pins = Pins { at: pins.to_path_buf(), good: read_pins(&std::fs::read_to_string(pins)?)?, said: None };
         std::fs::create_dir_all(state)?;
         let file = state.join(STATE_FILE);
@@ -153,7 +185,8 @@ impl Sessions {
             held: Mutex::new(BTreeSet::new()),
             state: state.to_path_buf(),
             credentials: Mutex::new(credentials),
-            up,
+            engines,
+            placed: Mutex::new(BTreeMap::new()),
             ca,
             egress: Mutex::new(BTreeMap::new()),
             node_addrs: super::node_addrs(),
@@ -307,10 +340,14 @@ impl Sessions {
         write_private(&self.state.join(STATE_FILE), &serde_json::to_vec(&*all).expect("serializes"))
     }
 
-    /// A stream to the computer's session port, through the parent's engine.
+    /// A stream to the computer's session port, through its engine (its
+    /// start placed it, or `engine_of` found it).
     fn upgrade(&self, name: &str) -> io::Result<UnixStream> {
         api::validate_name(name).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
-        let mut s = (self.up)()?;
+        let Some(i) = self.placed.lock().expect("never poisoned").get(name).copied() else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, format!("no engine of this home runs {name}")));
+        };
+        let mut s = (self.engines[i].up)()?;
         s.set_read_timeout(Some(sandcastle_session::HANDSHAKE_WAIT))?;
         write!(s, "POST /v1/containers/{name}/session HTTP/1.1\r\nHost: engine\r\nConnection: Upgrade\r\nUpgrade: {}\r\nContent-Length: 0\r\n\r\n", super::server::SESSION_UPGRADE)?;
         let head = read_head(&mut s)?;
@@ -319,6 +356,70 @@ impl Sessions {
         }
         s.set_read_timeout(None)?;
         Ok(s)
+    }
+}
+
+impl Sessions {
+    fn place_at(&self, name: &str, i: usize) {
+        let mut placed = self.placed.lock().expect("never poisoned");
+        if placed.contains_key(name) || placed.len() < CREDENTIALS_MAX {
+            placed.insert(name.to_string(), i);
+        }
+    }
+
+    fn unplace(&self, name: &str) {
+        self.placed.lock().expect("never poisoned").remove(name);
+    }
+
+    /// The engine computer `name` runs on: where its start placed it, or
+    /// the one that answers for it. Not found on any is a 404, as on one
+    /// engine; an engine that cannot answer makes it unknown, never gone.
+    async fn engine_of(&self, name: &str) -> Result<usize, ApiError> {
+        if let Some(i) = self.placed.lock().expect("never poisoned").get(name).copied() {
+            return Ok(i);
+        }
+        let mut unanswered = None;
+        for i in 0..self.engines.len() {
+            match inspect(self, i, name).await {
+                Ok(_) => {
+                    self.place_at(name, i);
+                    return Ok(i);
+                }
+                Err(ApiError::NotFound(_)) => {}
+                Err(e) => unanswered = Some(format!("engine {}: {e}", self.engines[i].name)),
+            }
+        }
+        Err(match unanswered {
+            Some(why) => ApiError::Internal(format!("{name} is on no engine that answered, and {why}")),
+            None => ApiError::NotFound(format!("no container {name} is running")),
+        })
+    }
+
+    /// Where a start of `memory_mib` of `image` goes: the first engine, in
+    /// the home's order, that holds the image and whose memory takes the
+    /// start (the engine's own test); with none, the one holding it with
+    /// the most memory free, which refuses it as a full node does (429).
+    async fn place(&self, image: Option<&str>, memory_mib: u64) -> usize {
+        let mut fullest: Option<(usize, i64)> = None;
+        for i in 0..self.engines.len() {
+            let Ok(h) = call(self, i, Method::GET, "/v1/health", None).await else { continue };
+            // The list, which every engine answers (not only one that
+            // measures).
+            if let Some(image) = image {
+                let held = call(self, i, Method::GET, "/v1/images", None).await;
+                if !held.is_ok_and(|l| l.as_array().is_some_and(|l| l.iter().any(|m| m["reference"] == image))) {
+                    continue;
+                }
+            }
+            let (used, max) = (h["memory_mib"].as_i64().unwrap_or(i64::MAX), h["memory_mib_max"].as_i64().unwrap_or(0));
+            if used + memory_mib as i64 <= max {
+                return i;
+            }
+            if fullest.is_none_or(|(_, free)| max - used > free) {
+                fullest = Some((i, max - used));
+            }
+        }
+        fullest.map(|(i, _)| i).unwrap_or(0)
     }
 }
 
@@ -430,37 +531,64 @@ async fn route(sessions: Arc<Sessions>, req: Request<Incoming>) -> Result<Respon
                 Ok(r) => r,
                 Err(e) => return Ok(fail(e)),
             };
+            // A computer running already is its engine's to answer (a
+            // conflict, as on one engine); a new one is placed.
+            let (i, running) = match sessions.engine_of(&name).await {
+                Ok(i) => (i, true),
+                Err(ApiError::NotFound(_)) => {
+                    let memory = api::resources(start.instance.as_ref()).map(|r| r.memory_mib as u64).unwrap_or(0);
+                    (sessions.place(start.image.as_deref(), memory).await, false)
+                }
+                Err(e) => return Ok(fail(e)),
+            };
+            sessions.place_at(&name, i);
+            let unplace = |sessions: &Sessions| {
+                if !running {
+                    sessions.unplace(&name);
+                }
+            };
             if let Some(image) = &start.image {
-                if let Err(why) = wait_pinned(&sessions, &name, image, UNPINNED_WAIT, PINS_LOOK).await {
+                if let Err(why) = wait_pinned(&sessions, i, &name, image, UNPINNED_WAIT, PINS_LOOK).await {
+                    unplace(&sessions);
                     return Ok(fail(ApiError::Invalid(why)));
                 }
             }
-            let answer = forward(&sessions, req).await;
+            if sessions.engines.len() > 1 {
+                eprintln!("sandcastle-bridge: {name}: on engine {}", sessions.engines[i].name);
+            }
+            let answer = forward(&sessions, i, req).await;
             if !answer.status().is_success() {
+                unplace(&sessions);
                 return Ok(answer);
             }
             let policy = sandcastle_egress::Policy { internet: start.enable_internet, allow: start.allow.clone(), deny: start.deny.clone(), intercept: start.intercepts.clone() };
             let handler = PathBuf::from(start.handler.as_deref().and_then(|h| h.strip_prefix("unix:")).unwrap_or("/nonexistent"));
             if let Err(e) = sessions.register(&name, policy, handler) {
-                let _ = destroy(&sessions, &name).await;
+                let _ = destroy(&sessions, i, &name).await;
+                unplace(&sessions);
                 return Ok(fail(ApiError::Invalid(format!("the computer's egress: {e}"))));
             }
-            match claim_when_running(sessions.clone(), name.clone()).await {
+            match claim_when_running(sessions.clone(), i, name.clone()).await {
                 Ok(()) => answer,
                 Err(why) => {
                     eprintln!("sandcastle-bridge: {name}: refused, destroyed: {why}");
-                    let _ = destroy(&sessions, &name).await;
+                    let _ = destroy(&sessions, i, &name).await;
+                    unplace(&sessions);
                     fail(ApiError::Internal(format!("the computer did not attest: {why}")))
                 }
             }
         }
         (&Method::PUT, ["v1", "containers", name, "intercepts"]) => {
             let name = name.to_string();
+            let i = match sessions.engine_of(&name).await {
+                Ok(i) => i,
+                Err(e) => return Ok(fail(e)),
+            };
             let (req, x) = match buffered::<api::InterceptsRequest>(req).await {
                 Ok(r) => r,
                 Err(e) => return Ok(fail(e)),
             };
-            let answer = forward(&sessions, req).await;
+            let answer = forward(&sessions, i, req).await;
             if answer.status().is_success() {
                 if let Err(e) = sessions.set_intercepts(&name, x.intercepts) {
                     return Ok(fail(ApiError::Invalid(format!("the computer's intercepts: {e}"))));
@@ -471,14 +599,154 @@ async fn route(sessions: Arc<Sessions>, req: Request<Incoming>) -> Result<Respon
         (&Method::POST, ["v1", "containers", name, "destroy"]) => {
             let name = name.to_string();
             sessions.held.lock().expect("never poisoned").remove(&name);
-            let answer = forward(&sessions, req).await;
+            // On no engine: the first answers it, as one engine would.
+            let i = match sessions.engine_of(&name).await {
+                Ok(i) => i,
+                Err(ApiError::NotFound(_)) => 0,
+                Err(e) => return Ok(fail(e)),
+            };
+            let answer = forward(&sessions, i, req).await;
             if answer.status().is_success() {
                 let _ = sessions.forget(&name);
+                sessions.unplace(&name);
             }
             answer
         }
-        _ => forward(&sessions, req).await,
+        (&Method::GET, ["v1", "containers"]) => every_engine(&sessions, "/v1/containers", merge_lists).await,
+        (&Method::GET, ["v1", "health"]) => every_engine(&sessions, "/v1/health", merge_health).await,
+        (&Method::GET, ["v1", "images"]) => every_engine(&sessions, "/v1/images", images_everywhere).await,
+        (&Method::POST, ["v1", "images", "load"]) => load_everywhere(&sessions, req).await,
+        (_, ["v1", "containers", name, ..]) => match sessions.engine_of(name).await {
+            Ok(i) => forward(&sessions, i, req).await,
+            Err(e) => fail(e),
+        },
+        _ => forward(&sessions, 0, req).await,
     })
+}
+
+/// One GET to every engine, the answers that came merged by `merge` with
+/// their engines' names. An engine that does not answer is said in the
+/// log and left out; with none answering, the first's error.
+async fn every_engine(sessions: &Sessions, path: &str, merge: fn(Vec<(&str, serde_json::Value)>) -> serde_json::Value) -> Response<Body> {
+    let mut answers = Vec::new();
+    let mut first_error = None;
+    for i in 0..sessions.engines.len() {
+        match call(sessions, i, Method::GET, path, None).await {
+            Ok(v) => answers.push((sessions.engines[i].name.as_str(), v)),
+            Err(e) => {
+                eprintln!("sandcastle-bridge: engine {}: {path}: {e}", sessions.engines[i].name);
+                first_error.get_or_insert(e);
+            }
+        }
+    }
+    match (answers.is_empty(), first_error) {
+        (true, Some(e)) => fail(e),
+        _ => full(super::server::json(200, &merge(answers))),
+    }
+}
+
+/// Every engine's computers, in one list.
+fn merge_lists(answers: Vec<(&str, serde_json::Value)>) -> serde_json::Value {
+    answers.into_iter().flat_map(|(_, v)| v.as_array().cloned().unwrap_or_default()).collect()
+}
+
+/// The engines' counts summed, and each engine's own.
+fn merge_health(answers: Vec<(&str, serde_json::Value)>) -> serde_json::Value {
+    let sum = |k: &str| answers.iter().map(|(_, v)| v[k].as_u64().unwrap_or(0)).sum::<u64>();
+    let engines: Vec<serde_json::Value> = answers
+        .iter()
+        .map(|(name, v)| serde_json::json!({ "name": name, "vms": v["vms"], "memory_mib": v["memory_mib"], "memory_mib_max": v["memory_mib_max"] }))
+        .collect();
+    serde_json::json!({
+        "vms": sum("vms"),
+        "vms_max": sum("vms_max"),
+        "memory_mib": sum("memory_mib"),
+        "memory_mib_max": sum("memory_mib_max"),
+        "ca_pem": answers.first().map(|(_, v)| v["ca_pem"].clone()).unwrap_or_default(),
+        "engines": engines,
+    })
+}
+
+/// The images every engine that answered holds, by reference: celld loads
+/// one any of them lacks, and the load goes to each.
+fn images_everywhere(answers: Vec<(&str, serde_json::Value)>) -> serde_json::Value {
+    let refs = |v: &serde_json::Value| -> BTreeSet<String> { v.as_array().into_iter().flatten().filter_map(|i| i["reference"].as_str().map(str::to_string)).collect() };
+    let Some(((_, first), rest)) = answers.split_first() else { return serde_json::json!([]) };
+    let everywhere: BTreeSet<String> = rest.iter().fold(refs(first), |held, (_, v)| held.intersection(&refs(v)).cloned().collect());
+    first.as_array().into_iter().flatten().filter(|i| i["reference"].as_str().is_some_and(|r| everywhere.contains(r))).cloned().collect()
+}
+
+/// A load (`docker save`'s tar) to every engine at once, its body sent to
+/// each as it comes. It answers the first engine's answer once each
+/// engine that took it loaded it; any that failed, its error. An engine
+/// that cannot be reached is said in the log and left out: its starts go
+/// elsewhere (`place` needs the image held).
+async fn load_everywhere(sessions: &Arc<Sessions>, req: Request<Incoming>) -> Response<Body> {
+    use http_body_util::channel::Channel;
+    let (parts, mut body) = req.into_parts();
+    let path = parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/v1/images/load".into());
+    let mut senders = Vec::new();
+    let mut answers = Vec::new();
+    for i in 0..sessions.engines.len() {
+        let (tx, rx) = Channel::<Bytes, io::Error>::new(LOAD_FRAMES_QUEUED);
+        let mut b = Request::post(path.as_str()).header("host", "engine");
+        if let Some(t) = parts.headers.get("content-type") {
+            b = b.header("content-type", t);
+        }
+        let r = b.body(rx).expect("a request");
+        let s = sessions.clone();
+        answers.push(tokio::spawn(async move { send(&s, i, r).await }));
+        senders.push(Some(tx));
+    }
+    // Bounded by the body's length (each engine caps an image).
+    let mut cut = None;
+    while let Some(frame) = body.frame().await {
+        match frame {
+            Ok(frame) => {
+                if let Ok(data) = frame.into_data() {
+                    for tx in senders.iter_mut() {
+                        if let Some(t) = tx {
+                            if t.send_data(data.clone()).await.is_err() {
+                                *tx = None;
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                cut = Some(e.to_string());
+                break;
+            }
+        }
+    }
+    for tx in senders.into_iter().flatten() {
+        if cut.is_some() {
+            // An engine must not build a cut tar as if whole.
+            tx.abort(io::Error::other("the upload was cut"));
+        }
+    }
+    if let Some(why) = cut {
+        return fail(ApiError::Invalid(format!("the image's upload: {why}")));
+    }
+    let mut first: Option<Response<Body>> = None;
+    for (i, answer) in answers.into_iter().enumerate() {
+        let name = &sessions.engines[i].name;
+        match answer.await {
+            Ok(Ok(r)) if r.status().is_success() => {
+                if first.is_none() {
+                    first = Some(r.map(|b| b.boxed()));
+                }
+            }
+            Ok(Ok(r)) => {
+                let status = r.status();
+                let text = r.into_body().collect().await.map(|b| String::from_utf8_lossy(&b.to_bytes()).chars().take(500).collect::<String>()).unwrap_or_default();
+                return fail(ApiError::Internal(format!("engine {name}: {status} {text}")));
+            }
+            Ok(Err(e)) => eprintln!("sandcastle-bridge: engine {name}: a load: {e}; its starts go elsewhere"),
+            Err(e) => eprintln!("sandcastle-bridge: engine {name}: a load: {e}"),
+        }
+    }
+    first.unwrap_or_else(|| fail(ApiError::Internal("no engine took the image".into())))
 }
 
 /// A request's body read whole (up to the engine's ceiling) and parsed, and
@@ -500,8 +768,8 @@ async fn buffered<T: serde::de::DeserializeOwned>(req: Request<Incoming>) -> Res
 /// `look`, at most `wait`, and is refused then with no computer booted: a
 /// missed pin costs a wait, not a computer booted to be refused, and a pin
 /// added within the wait starts it.
-async fn wait_pinned(sessions: &Arc<Sessions>, name: &str, image: &str, wait: Duration, look: Duration) -> Result<(), String> {
-    let Some(pcr0) = image_pcr0(sessions, image).await else { return Ok(()) };
+async fn wait_pinned(sessions: &Arc<Sessions>, engine: usize, name: &str, image: &str, wait: Duration, look: Duration) -> Result<(), String> {
+    let Some(pcr0) = image_pcr0(sessions, engine, image).await else { return Ok(()) };
     if sessions.pins().contains(&pcr0) {
         return Ok(());
     }
@@ -533,14 +801,14 @@ async fn wait_pinned(sessions: &Arc<Sessions>, name: &str, image: &str, wait: Du
 /// The engine's PCR0 for `image` on its boot, measured now if it has none
 /// (one small sandbox, once per image and boot). A hint only: the claim
 /// still checks the computer's own document.
-async fn image_pcr0(sessions: &Sessions, image: &str) -> Option<[u8; 48]> {
+async fn image_pcr0(sessions: &Sessions, engine: usize, image: &str) -> Option<[u8; 48]> {
     let at = format!("/v1/images/{}", path_segment(image));
-    let held = call(sessions, Method::GET, &at, None).await.ok()?;
+    let held = call(sessions, engine, Method::GET, &at, None).await.ok()?;
     let pcr0 = match held["pcr0"].as_str() {
         Some(p) => p.to_string(),
         None => {
             let nonce = hex::encode(random32().ok()?);
-            let measured = call(sessions, Method::POST, &format!("{at}/measure"), Some(serde_json::json!({ "nonce": nonce }))).await.ok()?;
+            let measured = call(sessions, engine, Method::POST, &format!("{at}/measure"), Some(serde_json::json!({ "nonce": nonce }))).await.ok()?;
             measured["pcr0"].as_str()?.to_string()
         }
     };
@@ -554,34 +822,41 @@ fn path_segment(s: &str) -> String {
         .collect()
 }
 
-/// One JSON call to the parent's engine; a status that is not a success is
-/// its error.
-async fn call(sessions: &Sessions, method: Method, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, ApiError> {
+/// One JSON call to engine `engine`; a status that is not a success is its
+/// error (a 404 as `NotFound`).
+async fn call(sessions: &Sessions, engine: usize, method: Method, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, ApiError> {
     let body = body.map(|b| Bytes::from(serde_json::to_vec(&b).expect("serializes"))).unwrap_or_default();
     let req = Request::builder()
         .method(method)
         .uri(path)
         .header("host", "engine")
         .header("content-type", "application/json")
-        .body(Full::new(body).map_err(|never| match never {}).boxed())
+        .body(Full::new(body))
         .map_err(|e| ApiError::Invalid(e.to_string()))?;
-    let r = send(sessions, req).await.map_err(ApiError::Internal)?;
-    let ok = r.status().is_success();
+    let r = send(sessions, engine, req).await.map_err(ApiError::Internal)?;
+    let status = r.status();
     let body = r.into_body().collect().await.map_err(|e| ApiError::Internal(e.to_string()))?.to_bytes();
-    if !ok {
-        return Err(ApiError::Internal(String::from_utf8_lossy(&body).chars().take(500).collect()));
+    let text = || String::from_utf8_lossy(&body).chars().take(500).collect::<String>();
+    if status == hyper::StatusCode::NOT_FOUND {
+        return Err(ApiError::NotFound(text()));
+    }
+    if !status.is_success() {
+        return Err(ApiError::Internal(text()));
     }
     serde_json::from_slice(&body).map_err(|e| ApiError::Internal(format!("{path}: {e}")))
 }
 
 /// The start's computer running, then claimed.
-async fn claim_when_running(sessions: Arc<Sessions>, name: String) -> Result<(), String> {
+async fn claim_when_running(sessions: Arc<Sessions>, engine: usize, name: String) -> Result<(), String> {
     let t0 = std::time::Instant::now();
     // Bounded by RUNNING_WAIT.
     loop {
-        match inspect(&sessions, &name).await {
+        match inspect(&sessions, engine, &name).await {
             Ok(v) if v["state"] == "running" => break,
             Ok(v) if v["running"] == false => return Err("it ended as it started".into()),
+            // Its engine answered its start, then holds no such computer:
+            // it ended and is gone, not on its way.
+            Err(ApiError::NotFound(_)) => return Err("it was gone right after its start".into()),
             _ if t0.elapsed() > RUNNING_WAIT => return Err(format!("not running within {} s", RUNNING_WAIT.as_secs())),
             _ => tokio::time::sleep(Duration::from_millis(100)).await,
         }
@@ -599,8 +874,12 @@ async fn exec(sessions: Arc<Sessions>, name: String, mut req: Request<Incoming>)
         Ok(x) => x,
         Err(e) => return fail(e),
     };
-    // The container's PATH, as its image gives it.
-    let path = match inspect(&sessions, &name).await {
+    // The container's PATH, as its image gives it, from its engine.
+    let engine = match sessions.engine_of(&name).await {
+        Ok(i) => i,
+        Err(e) => return fail(e),
+    };
+    let path = match inspect(&sessions, engine, &name).await {
         Ok(v) => v["path"].as_str().map(str::to_string),
         Err(e) => return fail(e),
     };
@@ -633,19 +912,24 @@ async fn exec(sessions: Arc<Sessions>, name: String, mut req: Request<Incoming>)
     }
 }
 
-/// One request to the parent's engine, on a connection of its own.
-async fn forward<B>(sessions: &Sessions, req: Request<B>) -> Response<Body>
+/// One request to engine `engine`, on a connection of its own.
+async fn forward<B>(sessions: &Sessions, engine: usize, req: Request<B>) -> Response<Body>
 where
     B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Sync + 'static,
 {
-    match send(sessions, req.map(|b| b.boxed())).await {
+    match send(sessions, engine, req.map(|b| b.boxed())).await {
         Ok(r) => r.map(|b| b.boxed()),
-        Err(e) => fail(ApiError::Internal(format!("the parent's engine: {e}"))),
+        Err(e) => fail(ApiError::Internal(format!("engine {}: {e}", sessions.engines[engine].name))),
     }
 }
 
-async fn send(sessions: &Sessions, req: Request<Body>) -> Result<Response<Incoming>, String> {
-    let up = (sessions.up)().map_err(|e| e.to_string())?;
+async fn send<B>(sessions: &Sessions, engine: usize, req: Request<B>) -> Result<Response<Incoming>, String>
+where
+    B: hyper::body::Body + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let up = (sessions.engines[engine].up)().map_err(|e| e.to_string())?;
     up.set_nonblocking(true).map_err(|e| e.to_string())?;
     let up = tokio::net::UnixStream::from_std(up).map_err(|e| e.to_string())?;
     let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(up)).await.map_err(|e| e.to_string())?;
@@ -653,26 +937,19 @@ async fn send(sessions: &Sessions, req: Request<Body>) -> Result<Response<Incomi
     sender.send_request(req).await.map_err(|e| e.to_string())
 }
 
-/// The parent's `inspect` of a computer.
-async fn inspect(sessions: &Sessions, name: &str) -> Result<serde_json::Value, ApiError> {
+/// An engine's `inspect` of a computer: a 404 is `NotFound`.
+async fn inspect(sessions: &Sessions, engine: usize, name: &str) -> Result<serde_json::Value, ApiError> {
     api::validate_name(name)?;
-    let req = Request::get(format!("/v1/containers/{name}")).header("host", "engine").body(Full::new(Bytes::new()).map_err(|never| match never {}).boxed()).expect("a request");
-    let r = send(sessions, req).await.map_err(ApiError::Internal)?;
-    let ok = r.status().is_success();
-    let body = r.into_body().collect().await.map_err(|e| ApiError::Internal(e.to_string()))?.to_bytes();
-    if !ok {
-        return Err(ApiError::NotFound(String::from_utf8_lossy(&body).chars().take(500).collect()));
-    }
-    serde_json::from_slice(&body).map_err(|e| ApiError::Internal(format!("inspect: {e}")))
+    call(sessions, engine, Method::GET, &format!("/v1/containers/{name}"), None).await
 }
 
-async fn destroy(sessions: &Sessions, name: &str) -> Result<(), String> {
+async fn destroy(sessions: &Sessions, engine: usize, name: &str) -> Result<(), String> {
     let req = Request::post(format!("/v1/containers/{name}/destroy"))
         .header("host", "engine")
         .header("content-type", "application/json")
-        .body(Full::new(Bytes::from_static(b"{}")).map_err(|never| match never {}).boxed())
+        .body(Full::new(Bytes::from_static(b"{}")))
         .expect("a request");
-    send(sessions, req).await.map(|_| ())
+    send(sessions, engine, req).await.map(|_| ())
 }
 
 /// One `ports.sock` request in the home, over the computer's session: the
@@ -692,6 +969,10 @@ pub fn port(client: UnixStream, sessions: &Arc<Sessions>) -> io::Result<()> {
         Ok(r) => r,
         Err(_) => return send_with_fd(client.as_raw_fd(), &reply(false, "invalid", "a container's name and a port from 1"), None),
     };
+    if let Err(e) = sessions.rt.block_on(sessions.engine_of(&req.name)) {
+        let kind = if matches!(e, ApiError::NotFound(_)) { "not_found" } else { "internal" };
+        return send_with_fd(client.as_raw_fd(), &reply(false, kind, &e.to_string()), None);
+    }
     match sessions.agent(&req.name).connect_exact(req.port) {
         Ok(conn) => send_with_fd(client.as_raw_fd(), &reply(true, "", ""), Some(conn.as_raw_fd())),
         Err(ClientError::Refused(m)) => send_with_fd(client.as_raw_fd(), &reply(false, "refused", &m), None),
@@ -731,14 +1012,15 @@ mod tests {
         let pins = dir.join("pins");
         std::fs::write(&pins, "ab".repeat(48)).unwrap();
         let up: Up = Arc::new(|| Err(io::Error::other("no parent in this test")));
-        let a = Sessions::open(&dir.join("state"), &pins, up.clone()).unwrap();
+        let one = || vec![EngineAt { name: "local".into(), up: up.clone() }];
+        let a = Sessions::open(&dir.join("state"), &pins, one()).unwrap();
         let c = Credential { guest_key: [1; 32], secret: [2; 32] };
         a.keep("c1", Some(c.clone())).unwrap();
         a.keep("c2", Some(c.clone())).unwrap();
         a.forget("c2").unwrap();
         let mode = std::fs::metadata(dir.join("state").join(STATE_FILE)).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
-        let b = Sessions::open(&dir.join("state"), &pins, up).unwrap();
+        let b = Sessions::open(&dir.join("state"), &pins, one()).unwrap();
         assert_eq!(b.credentials.lock().unwrap().get("c1"), Some(&c));
         assert!(b.credentials.lock().unwrap().get("c2").is_none());
         assert_eq!(b.dial("c2").unwrap_err().kind(), io::ErrorKind::NotFound, "no credential, no session");
@@ -820,7 +1102,7 @@ mod tests {
             }
             _ => (404, r#"{"error":"no such image","kind":"not_found"}"#.to_string()),
         });
-        let s = Arc::new(Sessions::open(&dir.join("state"), &pins, up).unwrap());
+        let s = Arc::new(Sessions::open(&dir.join("state"), &pins, vec![EngineAt { name: "local".into(), up }]).unwrap());
         let (wait, look) = (Duration::from_secs(5), Duration::from_millis(50));
         let rt = s.rt.clone();
 
@@ -833,19 +1115,19 @@ mod tests {
             })
         };
         let t0 = std::time::Instant::now();
-        rt.block_on(wait_pinned(&s, "c1", "img", wait, look)).unwrap();
+        rt.block_on(wait_pinned(&s, 0, "c1", "img", wait, look)).unwrap();
         writer.join().unwrap();
         assert!(t0.elapsed() >= Duration::from_millis(400) && t0.elapsed() < Duration::from_secs(3), "{:?}", t0.elapsed());
         assert!(s.held.lock().unwrap().is_empty());
 
         // Pinned already: at once.
         let t0 = std::time::Instant::now();
-        rt.block_on(wait_pinned(&s, "c1", "img", wait, look)).unwrap();
+        rt.block_on(wait_pinned(&s, 0, "c1", "img", wait, look)).unwrap();
         assert!(t0.elapsed() < look, "{:?}", t0.elapsed());
 
         // Never pinned: refused when the wait ends, booting nothing.
         let t0 = std::time::Instant::now();
-        let why = rt.block_on(wait_pinned(&s, "c2", "never", Duration::from_millis(300), look)).unwrap_err();
+        let why = rt.block_on(wait_pinned(&s, 0, "c2", "never", Duration::from_millis(300), look)).unwrap_err();
         assert!(why.contains(&pin(0xcc)) && why.contains("no computer was booted"), "{why}");
         assert!(t0.elapsed() >= Duration::from_millis(300));
 
@@ -857,25 +1139,207 @@ mod tests {
                 s.held.lock().unwrap().remove("c3");
             })
         };
-        let why = rt.block_on(wait_pinned(&s, "c3", "never", wait, look)).unwrap_err();
+        let why = rt.block_on(wait_pinned(&s, 0, "c3", "never", wait, look)).unwrap_err();
         destroyer.join().unwrap();
         assert!(why.contains("destroyed"), "{why}");
 
         // No PCR0 yet: measured, with a fresh nonce each time.
-        rt.block_on(wait_pinned(&s, "c4", "fresh/one", wait, look)).unwrap();
-        rt.block_on(wait_pinned(&s, "c4", "fresh/one", wait, look)).unwrap();
+        rt.block_on(wait_pinned(&s, 0, "c4", "fresh/one", wait, look)).unwrap();
+        rt.block_on(wait_pinned(&s, 0, "c4", "fresh/one", wait, look)).unwrap();
         let nonces = measures.lock().unwrap().clone();
         assert_eq!(nonces.len(), 2);
         assert!(nonces.iter().all(|n| n.len() == 64) && nonces[0] != nonces[1], "{nonces:?}");
 
         // The engine cannot say (no such image, no route): the claim decides.
-        rt.block_on(wait_pinned(&s, "c5", "unknown", wait, look)).unwrap();
+        rt.block_on(wait_pinned(&s, 0, "c5", "unknown", wait, look)).unwrap();
 
         // Pins that stop reading keep the last good ones.
         std::fs::write(&pins, "not a pin\n").unwrap();
         assert!(s.pins().contains(&[0xbb; 48]));
         std::fs::write(&pins, format!("{}\n", pin(0xcc))).unwrap();
         assert_eq!(s.pins(), [[0xcc; 48]].into());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// What a stand-in engine saw: each request's method, path and query,
+    /// and its body's length and SHA-256.
+    type Seen = Arc<Mutex<Vec<(String, usize, String)>>>;
+
+    /// A stand-in engine served by hyper on `rt`: `answer` of a request's
+    /// method and path (with its query) and its body, as a status and JSON.
+    fn fake_engine(rt: &tokio::runtime::Runtime, answer: impl Fn(&str, &str, &[u8]) -> (u16, String) + Send + Sync + 'static) -> (Up, Seen) {
+        use sha2::Digest;
+        let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+        let (answer, handle, log) = (Arc::new(answer), rt.handle().clone(), seen.clone());
+        let up: Up = Arc::new(move || {
+            let (mine, theirs) = UnixStream::pair()?;
+            theirs.set_nonblocking(true)?;
+            let (answer, log) = (answer.clone(), log.clone());
+            handle.spawn(async move {
+                let Ok(theirs) = tokio::net::UnixStream::from_std(theirs) else { return };
+                let svc = hyper::service::service_fn(move |req: Request<Incoming>| {
+                    let (answer, log) = (answer.clone(), log.clone());
+                    async move {
+                        let method = req.method().to_string();
+                        let at = req.uri().path_and_query().map(|p| p.to_string()).unwrap_or_default();
+                        let body = req.into_body().collect().await.map(|b| b.to_bytes()).unwrap_or_default();
+                        log.lock().unwrap().push((format!("{method} {at}"), body.len(), hex::encode(sha2::Sha256::digest(&body))));
+                        let (status, text) = answer(&method, &at, &body);
+                        let mut r = Response::new(Full::new(Bytes::from(text)));
+                        *r.status_mut() = hyper::StatusCode::from_u16(status).unwrap();
+                        Ok::<_, Infallible>(r)
+                    }
+                });
+                let _ = hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(theirs), svc).await;
+            });
+            Ok(mine)
+        });
+        (up, seen)
+    }
+
+    /// A stand-in engine's answers: its memory, its images, its computers.
+    fn engine_answers(used: u64, images: &'static [&'static str], computers: &'static [&'static str]) -> impl Fn(&str, &str, &[u8]) -> (u16, String) + Send + Sync + 'static {
+        move |method, at, _| {
+            let path = at.split('?').next().unwrap_or("");
+            let list = |names: &[&str], key: &str| serde_json::to_string(&names.iter().map(|n| serde_json::json!({ key: n })).collect::<Vec<_>>()).unwrap();
+            match (method, path) {
+                ("GET", "/v1/health") => (200, format!(r#"{{"vms":{},"vms_max":8,"memory_mib":{used},"memory_mib_max":17000,"ca_pem":"x"}}"#, computers.len())),
+                ("GET", "/v1/images") => (200, list(images, "reference")),
+                ("GET", "/v1/containers") => (200, list(computers, "name")),
+                ("POST", "/v1/images/load") => (200, r#"{"reference":"loaded"}"#.into()),
+                ("GET", p) if p.starts_with("/v1/images/") => match images.contains(&&p["/v1/images/".len()..]) {
+                    true => (200, format!(r#"{{"reference":"{}"}}"#, &p["/v1/images/".len()..])),
+                    false => (404, r#"{"error":"no such image","kind":"not_found"}"#.into()),
+                },
+                ("GET", p) if p.starts_with("/v1/containers/") && computers.contains(&&p["/v1/containers/".len()..]) => (200, format!(r#"{{"name":"{}","state":"running"}}"#, &p["/v1/containers/".len()..])),
+                ("POST", p) if p.ends_with("/start") => (201, r#"{"state":"starting"}"#.into()),
+                ("POST", p) if p.ends_with("/destroy") => (200, r#"{"destroyed":true}"#.into()),
+                _ => (404, r#"{"error":"no such container","kind":"not_found"}"#.into()),
+            }
+        }
+    }
+
+    fn engines_test_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("home-engines-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pins"), format!("{}\n", pin(0xaa))).unwrap();
+        dir
+    }
+
+    // Goal: a start goes to the first engine, in the home's order, that
+    // holds its image and whose memory takes it; with none, to the one with
+    // the most memory free; an engine without the image, or one that does
+    // not answer, takes none. A computer is found on its engine after a
+    // home restart; on none it is a 404, and with an engine not answering
+    // it is unknown, never gone.
+    #[test]
+    fn a_start_goes_where_its_image_and_memory_are() {
+        let fakes = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let dir = engines_test_dir("place");
+        let (near, _) = fake_engine(&fakes, engine_answers(15_000, &["img", "near-only"], &["on-near"]));
+        let (far, _) = fake_engine(&fakes, engine_answers(2_000, &["img"], &["on-far"]));
+        let down: Up = Arc::new(|| Err(io::Error::other("no route to that parent")));
+        let engines = vec![EngineAt { name: "local".into(), up: near }, EngineAt { name: "down".into(), up: down }, EngineAt { name: "far".into(), up: far }];
+        let s = Sessions::open(&dir.join("state"), &dir.join("pins"), engines).unwrap();
+        let rt = s.rt.clone();
+        assert_eq!(rt.block_on(s.place(Some("img"), 1_024)), 0, "the home's own parent takes it");
+        assert_eq!(rt.block_on(s.place(Some("img"), 4_096)), 2, "its own is too full: the far one");
+        assert_eq!(rt.block_on(s.place(Some("near-only"), 4_096)), 0, "only its own holds the image: there, to be refused as full");
+        assert_eq!(rt.block_on(s.place(Some("img"), 16_000)), 2, "none takes it: the one with the most free");
+        assert_eq!(rt.block_on(s.engine_of("on-far")).unwrap(), 2);
+        assert_eq!(s.placed.lock().unwrap().get("on-far"), Some(&2), "found once, kept");
+        assert!(matches!(rt.block_on(s.engine_of("on-near")), Ok(0)));
+        assert!(matches!(rt.block_on(s.engine_of("nowhere")), Err(ApiError::Internal(m)) if m.contains("down")), "an engine not answering: unknown");
+        let two = vec![EngineAt { name: "local".into(), up: fake_engine(&fakes, engine_answers(0, &[], &[])).0 }, EngineAt { name: "far".into(), up: fake_engine(&fakes, engine_answers(0, &[], &[])).0 }];
+        let s2 = Sessions::open(&dir.join("state2"), &dir.join("pins"), two).unwrap();
+        assert!(matches!(s2.rt.block_on(s2.engine_of("nowhere")), Err(ApiError::NotFound(_))), "on no engine that answers, all answering: gone");
+        for bad in [vec![], (0..=ENGINES_MAX).map(|i| EngineAt { name: format!("e{i}"), up: s.engines[0].up.clone() }).collect(), vec![EngineAt { name: "a".into(), up: s.engines[0].up.clone() }, EngineAt { name: "a".into(), up: s.engines[0].up.clone() }]] {
+            assert!(Sessions::open(&dir.join("state3"), &dir.join("pins"), bad).is_err());
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// One HTTP request to a home's `engine.sock`, as celld makes it.
+    fn ask(rt: &tokio::runtime::Runtime, sock: &Path, method: &str, at: &str, body: Vec<u8>) -> (u16, serde_json::Value) {
+        rt.block_on(async {
+            let s = tokio::net::UnixStream::connect(sock).await.unwrap();
+            let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(s)).await.unwrap();
+            tokio::spawn(conn);
+            let req = Request::builder().method(method).uri(at).header("host", "engine").header("content-type", "application/json").body(Full::new(Bytes::from(body))).unwrap();
+            let r = sender.send_request(req).await.unwrap();
+            let status = r.status().as_u16();
+            let body = r.into_body().collect().await.unwrap().to_bytes();
+            (status, serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null))
+        })
+    }
+
+    // Goal: through a home of two engines, celld sees one engine: the
+    // health summed with each engine's own, every computer in one list, the
+    // images both hold, a load whose body reaches both whole, each
+    // computer's calls on its own engine, and a start on the engine that
+    // takes it (its failed claim destroys it there, and its placement
+    // goes). An engine that stops answering leaves the rest served.
+    #[test]
+    fn a_home_of_two_engines_answers_as_one() {
+        let fakes = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let client = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let dir = engines_test_dir("route");
+        let (near, near_seen) = fake_engine(&fakes, engine_answers(15_000, &["img", "near-only"], &["on-near"]));
+        let (far, far_seen) = fake_engine(&fakes, engine_answers(2_000, &["img"], &["on-far"]));
+        let far_up = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let far_gate = far_up.clone();
+        let far: Up = Arc::new(move || if far_gate.load(std::sync::atomic::Ordering::SeqCst) { far() } else { Err(io::Error::other("no route to that parent")) });
+        let s = Arc::new(Sessions::open(&dir.join("state"), &dir.join("pins"), vec![EngineAt { name: "local".into(), up: near }, EngineAt { name: "far".into(), up: far }]).unwrap());
+        let sock = dir.join("engine.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let served = s.clone();
+        std::thread::spawn(move || serve_engine(listener, served));
+
+        let (status, health) = ask(&client, &sock, "GET", "/v1/health", vec![]);
+        assert_eq!((status, health["memory_mib"].as_u64(), health["memory_mib_max"].as_u64(), health["vms"].as_u64()), (200, Some(17_000), Some(34_000), Some(2)));
+        assert_eq!(health["engines"][1]["name"], "far");
+        let (_, list) = ask(&client, &sock, "GET", "/v1/containers", vec![]);
+        assert_eq!(list.as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect::<Vec<_>>(), ["on-near", "on-far"]);
+        let (_, images) = ask(&client, &sock, "GET", "/v1/images", vec![]);
+        assert_eq!(images, serde_json::json!([{ "reference": "img" }]), "only what both hold");
+
+        let tar: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+        let (status, loaded) = ask(&client, &sock, "POST", "/v1/images/load?reference=new%2Fimage", tar.clone());
+        assert_eq!((status, loaded["reference"].as_str()), (200, Some("loaded")));
+        let sha = {
+            use sha2::Digest;
+            hex::encode(sha2::Sha256::digest(&tar))
+        };
+        for seen in [&near_seen, &far_seen] {
+            let seen = seen.lock().unwrap();
+            let load = seen.iter().find(|(r, _, _)| r.starts_with("POST /v1/images/load")).expect("a load");
+            assert_eq!((load.0.as_str(), load.1, load.2.as_str()), ("POST /v1/images/load?reference=new%2Fimage", tar.len(), sha.as_str()));
+        }
+
+        let (status, c) = ask(&client, &sock, "GET", "/v1/containers/on-far", vec![]);
+        assert_eq!((status, c["name"].as_str()), (200, Some("on-far")));
+        assert_eq!(ask(&client, &sock, "GET", "/v1/containers/nowhere", vec![]).0, 404);
+
+        // A start too big for the home's own parent goes far; with no guest
+        // to attest, it is destroyed there and its placement goes.
+        let start = serde_json::to_vec(&serde_json::json!({ "image": "img", "enableInternet": false, "instance": { "vcpu": 1, "memoryMib": 4096, "diskMb": 2000 } })).unwrap();
+        let (status, _) = ask(&client, &sock, "POST", "/v1/containers/c1/start", start);
+        assert_eq!(status, 500, "no guest attested");
+        let far_calls: Vec<String> = far_seen.lock().unwrap().iter().map(|(r, _, _)| r.clone()).collect();
+        assert!(far_calls.contains(&"POST /v1/containers/c1/start".to_string()) && far_calls.contains(&"POST /v1/containers/c1/destroy".to_string()), "{far_calls:?}");
+        assert!(!near_seen.lock().unwrap().iter().any(|(r, _, _)| r.contains("/c1/")));
+        assert!(!s.placed.lock().unwrap().contains_key("c1"));
+
+        // The far one gone: the rest still answers, and its computers are
+        // unknown, never gone.
+        far_up.store(false, std::sync::atomic::Ordering::SeqCst);
+        s.placed.lock().unwrap().clear();
+        let (status, health) = ask(&client, &sock, "GET", "/v1/health", vec![]);
+        assert_eq!((status, health["memory_mib_max"].as_u64()), (200, Some(17_000)));
+        let (_, images) = ask(&client, &sock, "GET", "/v1/images", vec![]);
+        assert_eq!(images.as_array().unwrap().len(), 2, "what the answering one holds");
+        assert_eq!(ask(&client, &sock, "GET", "/v1/containers/on-far", vec![]).0, 500);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
