@@ -97,6 +97,9 @@ mount -o noatime /dev/mapper/home $STATE
 mkdir -p $STATE/celld $STATE/macrofiche $STATE/door $STATE/caddy $STATE/log
 LOG=$STATE/log
 say "disk mounted (new=$new)"
+# how many accounts the door holds, a count and nothing else: with no
+# exec, the only way to see from outside that they came through a change
+say "door: $(grep -o '"created_at_s"' $STATE/door/accounts.json 2>/dev/null | wc -l) accounts"
 
 pids=()
 stop_all() {
