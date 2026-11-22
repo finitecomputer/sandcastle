@@ -25,7 +25,7 @@ sandcastle-docker-relay = { path = "crates/docker-relay" }
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
 hex = "=0.4.3"
 hmac = "=0.13.0"
-http-body-util = "=0.1.5"
+http-body-util = { version = "=0.1.5", features = ["channel"] }
 hyper = { version = "=1.12.0", features = ["http1", "server", "client"] }
 hyper-util = { version = "=0.1.21", features = ["tokio"] }
 # libc for namespaces, dlopen, vsock, and seccomp; the guest's layer

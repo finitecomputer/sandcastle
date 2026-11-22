@@ -269,6 +269,51 @@ live per listener. The intercept path is celld's
 `<data dir>/intercepts-<6 hex of sha256(node)>.sock`: run the home's celld
 with a fixed `CELLD_NODE` and give both halves that path.
 
+## Computers on other parents
+
+A home may run its computers on other parents than its own, so an org
+outgrows one machine. The home half drives each engine it names (its own
+parent's, then `--remote <name>=tcp:<address>:<port>` for each other one),
+and celld still sees one engine:
+
+- **A start** goes to the first engine, in that order, that holds its
+  image and whose memory takes it (`memory_mib` plus the start's, within
+  `memory_mib_max`: the engine's own test). With none, it goes to the one
+  with the most memory free, which refuses it as a full node does (429).
+  Each computer's calls then go to its engine; after a home restart, the
+  home asks each engine which one runs it. A computer on no engine is a
+  404; with an engine not answering, it is unknown (500), never gone.
+- **The list and health** are every engine's: the health sums them and
+  shows each (`engines`). **The images** are those every engine that
+  answers holds, so celld loads one any lacks, and **a load** goes to every
+  engine at once, its body sent to each as it comes. An engine that does
+  not answer is said in the log and left out; its starts go elsewhere.
+- **The attested session is unchanged**: the claim, exec and ports go
+  through the computer's own engine over the network, sealed end to end
+  between the home and the guest, as through the home's own parent.
+
+Two network hops, each a relay of `sandcastle-bridge relay --listen <end>
+--to <end> [--allow <cidr>]...` (an end is `unix:/<path>` or
+`tcp:<address>:<port>`; a TCP listener takes only its `--allow` ranges, and
+every connection is a relay of its own, at most 1024 live):
+
+- **The engine's API** on each other parent: `--listen tcp:<its private
+  address>:5100 --to unix:/var/lib/sandcastle-engine/engine.sock --allow
+  <the home's parent>/32`.
+- **Its computers' egress** back to the home: that engine's
+  `nitro.session_egress` names a relay's socket, `--listen
+  unix:/run/sandcastle/egress-out.sock --to tcp:<the home's parent>:5103`,
+  and on the home's parent a relay `--listen tcp:<its private
+  address>:5103 --to unix:<the parent half's --egress socket> --allow
+  <the other parents>`. Each egress session is the guest's Noise session to
+  its home, under its claim's secret: the relays and the network carry
+  ciphertext.
+
+The parents' security group takes 5100 and 5103 only from each other. A
+node builds each image's root itself, so each engine gives an image its
+own PCR0: the home's pins hold every engine's (`POST
+/v1/images/<ref>/measure` on each).
+
 ## The sealed scratch disk
 
 A computer's scratch disk (its overlay's writable layer: everything it
