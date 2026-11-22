@@ -157,6 +157,27 @@ end; the pause, from the restart to serving, 10.2 to 11.8 s; a rollback
 fragments) unchanged across each. The measuring boot reads PCR0 in 0.9 s,
 the same PCR0 as the image's own boot.
 
+## Logs and numbers
+
+The parent sees the home's console. A home with no exec says how it is in
+numbers there, never in anyone's words:
+
+- **at each boot:** its steps and their times, how many accounts its door
+  holds, the bucket's migration (objects, bytes), and its time to serve;
+- **a line a minute** (`home: stats {…}`): resident cells, the isolates'
+  census (cells, heap and external bytes, requests), the deployment's
+  version and generation, memory, load, the data disk's use, celld's RSS,
+  and celld's WARN and ERROR lines since the last minute, counted by their
+  event's name.
+
+`host/home-status.sh` (on a parent, as root) answers JSON for each home
+unit on it (state, restarts, slot, time to serve, door accounts, last
+stats, the last hour's boots, failures, error lines and refused computer
+starts), the computers' engine (its health: VMs and memory), the Nitro
+pool (CPUs, memory and PCIe slots free) and the host. `host/nitro-status.sh`
+asks every parent listed on the operator's machine and prints a line per
+home and per parent (`--json` for the whole).
+
 ## Network
 
 The home's NIC is a tap with plain NAT on the parent (`src/net.rs`):
