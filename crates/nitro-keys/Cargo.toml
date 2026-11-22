@@ -1,0 +1,28 @@
+[package]
+name = "sandcastle-nitro-keys"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "A key service in its own Nitro Sandbox (docs/nitro-keys.md): it holds each home's wrapping key and releases it only as the home's owner signed, on their own device."
+
+[features]
+# Making statements, as the owner's device does (the CLI, the app); the
+# service only reads them.
+sign = []
+
+[dependencies]
+sandcastle-nitro-attest.workspace = true
+# The service's own document, in its sandbox.
+sandcastle-nitro-probe.workspace = true
+libc.workspace = true
+base64.workspace = true
+hex.workspace = true
+k256.workspace = true
+ring.workspace = true
+rsa.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+sandcastle-nitro-attest = { workspace = true, features = ["testkit"] }

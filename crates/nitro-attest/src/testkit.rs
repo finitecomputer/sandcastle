@@ -85,6 +85,12 @@ impl Chain {
     }
 }
 
+impl Default for Chain {
+    fn default() -> Chain {
+        Chain::new()
+    }
+}
+
 /// A document's fields, valid by default, each changeable by a test.
 pub struct Fields {
     pub module_id: String,
@@ -124,6 +130,12 @@ impl Fields {
             tagged: false,
             indefinite: true,
         }
+    }
+}
+
+impl Default for Fields {
+    fn default() -> Fields {
+        Fields::new()
     }
 }
 

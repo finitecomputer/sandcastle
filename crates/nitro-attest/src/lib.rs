@@ -37,8 +37,8 @@ mod document;
 mod nonce;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod testkit;
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
 
 pub use cbor::{CborFault, Kind};
 pub use chain::{Trust, AWS_ROOT_G1_SHA256};
