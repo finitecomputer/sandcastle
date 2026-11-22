@@ -1,0 +1,19 @@
+# One of several homes on a parent (docs/nitro-home.md, "Many homes on one
+# parent"): nitro-home@<name>, its slots in /var/lib/nitro-home/homes/<name>
+# (home-stage.sh --home, home-switch.sh --home). As nitro-home.service in
+# all else: booted at the parent's start and again whenever it exits; a
+# stop is graceful, SIGTERM to the launcher alone.
+[Unit]
+Description=Fragment home %i: celld and the cell in a confidential Nitro sandbox
+After=network-online.target sandcastle-engine.service nitro-slots.service
+Wants=network-online.target sandcastle-engine.service nitro-slots.service
+
+[Service]
+ExecStart=/var/lib/nitro-home/homes/%i/current/nitro-home up --conf /var/lib/nitro-home/homes/%i/current/home.json
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

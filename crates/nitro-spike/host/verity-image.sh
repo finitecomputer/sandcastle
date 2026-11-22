@@ -43,6 +43,9 @@ rm -f "$out.ext4" "$out.verity"
 # superblock, so the same tree makes the same bytes and so the same root
 # hash.
 E2FSPROGS_FAKE_TIME=1767225600 mkfs.ext4 -q -F -b 4096 -O ^has_journal -U 6e17f0a5-0000-4000-8000-00000000c0de -E hash_seed=6e17f0a5-0000-4000-8000-00000000c0de,root_owner=0:0 -d "$stage" "$out.ext4" "${size_mib}M"
+# `mke2fs -d` copies every file's ctime, which no tool can set: the same
+# files staged again make another image, unless every inode's times are set
+"$(dirname "$(realpath "$0")")/fixed-times.sh" "$out.ext4" 1767225600
 format=$(veritysetup format --data-block-size=4096 --hash-block-size=4096 --uuid=6e17f0a5-0000-4000-8000-00000000c0de --salt=6e17f0a50000400080000000000c0de06e17f0a50000400080000000000c0de0 "$out.ext4" "$out.verity")
 field() { echo "$format" | awk -F: -v k="$1" '$1 == k {gsub(/[ \t]/, "", $2); print $2}'; }
 root_hash=$(field "Root hash")
