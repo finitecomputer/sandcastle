@@ -131,8 +131,11 @@ if ! kept guest "$GUEST_SHA" "$OUT/guest/sandcastle-guest"; then
 fi
 echo "$MKE2FS_SHA256  $MKE2FS" | sha256sum -c --quiet - || { echo "home-build: $MKE2FS is not the pinned mke2fs" >&2; exit 1; }
 ( cd "$sandcastle" && cargo build -q --release --locked -p sandcastle-nitro-spike -p sandcastle-nitro-home -p sandcastle-nitro-key )
+# a wildcard home's certificate key, request and check (tls.sh): the
+# issuer's own half (ACME, the zone's DNS) is never in a home
+( cd "$sandcastle" && cargo build -q --release --locked -p sandcastle-nitro-issuer --no-default-features )
 "$sandcastle/target/release/sandcastle-nitro-spike" initrd --init "$OUT/guest/sandcastle-guest" --mke2fs "$MKE2FS" --out "$OUT/guest.initrd" > /dev/null
-for b in nitro-key nitro-home-guest; do cp "$sandcastle/target/release/$b" "$OUT/bin/"; done
+for b in nitro-key nitro-home-guest nitro-issuer; do cp "$sandcastle/target/release/$b" "$OUT/bin/"; done
 cp "$sandcastle/target/release/nitro-home" "$OUT/nitro-home"
 
 say "celld $CELLD_SHA"
