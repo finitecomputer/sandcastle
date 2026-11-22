@@ -5,8 +5,8 @@
 # stop is graceful, SIGTERM to the launcher alone.
 [Unit]
 Description=Fragment home %i: celld and the cell in a confidential Nitro sandbox
-After=network-online.target sandcastle-engine.service
-Wants=network-online.target sandcastle-engine.service
+After=network-online.target sandcastle-engine.service nitro-slots.service
+Wants=network-online.target sandcastle-engine.service nitro-slots.service
 
 [Service]
 ExecStart=/var/lib/nitro-home/homes/%i/current/nitro-home up --conf /var/lib/nitro-home/homes/%i/current/home.json

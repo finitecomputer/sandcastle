@@ -112,10 +112,31 @@ if [ ${#reboot_for[@]} -gt 0 ]; then
     exit 3
 fi
 
-# 6. Slots: only up, in steps of 8 (the parent rounds a value up).
+# 6. Slots: only up, in steps of 8 (the parent rounds a value up). The
+# budget is the driver's, set in sysfs, so a reboot puts it back to 4: a
+# unit raises it again at every boot, before the engine and the homes
+# (nitro-home*.service: After=nitro-slots.service), so a parent's reboot
+# brings back as many sandboxes as before.
 if [ "$(cat $NE/pcie_slots)" -lt "$SLOTS" ]; then
     echo "$SLOTS" > $NE/pcie_slots
 fi
+cat > /etc/systemd/system/nitro-slots.service <<UNIT
+# parent-ready.sh: the parent's sandbox slot budget, at every boot
+[Unit]
+Description=Nitro: the parent's sandbox slots raised to $SLOTS
+Before=sandcastle-engine.service sandcastle-vms.service nitro-home.service
+ConditionPathExists=$NE/pcie_slots
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '[ "\$(cat $NE/pcie_slots)" -ge $SLOTS ] || echo $SLOTS > $NE/pcie_slots'
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable -q nitro-slots.service
 
 # 7. The facts. No instance id, AMI id or address: they go into a public
 # repository.

@@ -8,8 +8,8 @@
 # (Wants= of a unit that is not there is no error).
 [Unit]
 Description=Fragment home: celld and the cell in a confidential Nitro sandbox
-After=network-online.target sandcastle-engine.service
-Wants=network-online.target sandcastle-engine.service
+After=network-online.target sandcastle-engine.service nitro-slots.service
+Wants=network-online.target sandcastle-engine.service nitro-slots.service
 
 [Service]
 # whichever staged slot `current` names (home-stage.sh, home-switch.sh)
