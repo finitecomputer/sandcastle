@@ -11,9 +11,9 @@
 # not within SWITCH_S_MAX, the home goes back onto the slot it ran, and the
 # switch exits non-zero. Prints the pause: from the restart to serving.
 # A home whose front door never had a valid certificate (a new home whose
-# name does not point at its parent yet) serves without one ("serving
-# behind it"): that counts, its certificate "pending"; once it has had
-# one, a start without one is a failure.
+# name does not point at its parent yet, or its first start) serves
+# without one ("serving behind it"): that counts, its certificate
+# "pending"; once it has had one, a start without one is a failure.
 #
 # With --home (home-name.sh), one of several homes on the parent: its unit
 # is enabled once it serves (a parent's reboot starts it again), and the
@@ -36,7 +36,11 @@ point() { ln -sfn "$2" "$base/$1.new" && mv -T "$base/$1.new" "$base/$1"; }
 # the door's account count at the start before: a count, nothing else
 accounts() { journalctl -u "$unit" --since "$1" -o cat --no-pager | sed -n 's/.*home: door: \([0-9]*\) accounts.*/\1/p' | tail -n 1; }
 before=$(accounts "-30 days")
-had_certificate=$(journalctl -u "$unit" --since "-30 days" -o cat --no-pager | grep -c 'home: serving in' || true)
+# its certificate lives on its disk: valid starts since the disk was last
+# made new count (a home remade under its old name has another disk's
+# journal before that); a first start (no slot ran before) has had none
+had_certificate=$(journalctl -u "$unit" --since "-30 days" -o cat --no-pager | awk '/home: disk mounted \(new=1\)/ { n = 0 } /home: serving in/ { n++ } END { print n + 0 }')
+[ -n "$ran" ] || had_certificate=0
 # waits for this start's verdict, from its own process's lines alone (the
 # one it replaced says "exited" as it stops); prints "ok <ms> <certificate:
 # valid or pending>" or why not
