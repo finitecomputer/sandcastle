@@ -18,6 +18,8 @@ base64.workspace = true
 hex.workspace = true
 libc.workspace = true
 rsa.workspace = true
+# The disk header's and counter's HMACs, and the S3 signature (disk.rs, s3.rs).
+ring.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true
 serde.workspace = true

@@ -258,6 +258,39 @@ virtual authenticator (CTAP2, user verification).
 | The home restarted with the computer awake | the platform answering in 11.0 s; the next message woke a new VM ("up 0 min") with the file, 7.1 s from send to reply |
 | The same, since its stop keeps the computers (celld's `containers=keep`, lane A's) | the platform answering in 10.7 s; a file written 6 s before the restart read back by the **same VM** (its boot time unchanged, "up 7 min"), 18 s from send to reply, the cell's wake and its adoption of the computer included |
 
+## Rollback and disk swaps
+
+The design's PR 9. The data disk's first block names the home it belongs
+to, a random id of its own and a generation, all under an HMAC keyed from
+the disk's own key (`nitro-key`'s `disk.rs`). A counter outside the parent,
+an object behind the home's own credentials (the counter bucket of the
+sealed fleet bucket, `homes/<home>/disk`), holds the disk's id and its
+latest generation, under the same kind of HMAC. The parent holds neither
+the disk's key nor the counter's credentials.
+
+- `nitro-key disk open` releases the disk's key from KMS, checks the header
+  is this home's and names the counter's disk, and admits the disk only at
+  the counter's generation or one past it (a stop between the header's
+  write and the counter's). It then raises both, the header first.
+- `nitro-key disk bump` raises them again while the home runs, every few
+  minutes and at a graceful stop, so an older copy of the disk falls behind
+  its counter.
+
+| The parent hands the home | It opens? |
+|---|---|
+| its own disk, as it was left | yes, raised by one |
+| an older copy of it | **no**: "the disk is at generation g, its counter at g+n" |
+| another home's disk (same image, same KMS key) | **no**: "the disk is the home …'s" |
+| a blank disk, or one of the older (v1) form, once the counter exists | **no**: "the counter names this home's disk" |
+| any disk, with its counter removed | **no** (except a first open that stopped before writing it) |
+
+What it does not close: a copy taken after the last raise of a home that
+then stopped without its graceful raise (the window is the raise's
+interval), and whoever holds the counter's bucket (AWS, the project's
+administrators) rolling both back together. The disk's blocks are still
+not authenticated (AES-XTS): a changed block reads as garbage, not as an
+error (dm-integrity would make it one).
+
 ## What the parent can still see or do
 
 Each item is with the design PR that closes it
@@ -267,7 +300,7 @@ Each item is with the design PR that closes it
 |---|---|---|
 | 1 | ~~It can run any command in the home, and picks its entrypoint and environment~~ | **Closed** 2026-11-21 on the shared parent (lane A's #27 guest): `sandcastle.agent=none` on the measured line, so the parent's exec is refused ("this guest takes that only over its attested session, or not at all"); `sandcastle.start=image`, so the home runs its measured root's `start.json`, its sealed bundle and pins in that root too. The parent keeps a ping, a signal to the entrypoint (its stop), and kill |
 | 2 | **Whoever ships a new home image can ship one that skips the passkey check**, or anything else: the project's administrators can name any PCR0 in the key's policy (`kms:Put*`), and AWS can too | PR 10, a release rule we cannot change alone |
-| 3 | **It can roll back or swap the home's data disk** (an older copy, or another home's under the same key). It cannot read it: AES-XTS under a key from KMS. The encryption is not authenticated, so it can also corrupt blocks | PR 9 (rollback), with dm-integrity |
+| 3 | **It can roll back or swap the home's data disk** (an older copy, or another home's under the same key). It cannot read it: AES-XTS under a key from KMS. **Still open:** the encryption is not authenticated, so it can corrupt blocks | PR 9 ("Rollback and disk swaps"), once the home opens its disk with `nitro-key disk open`, within a raise's interval; corruption: dm-integrity |
 | 4 | **The fleet bucket is unsealed.** The parent's role has no access, and the home's traffic to S3 is TLS the home ends. But whoever holds AWS administration, or the home's IAM key, reads every object, and can roll the bucket back | The sealed fleet bucket (phase 2) |
 | 5 | ~~It could get a certificate for the home's names~~ (TLS-ALPN-01 validates whoever answers on the address the DNS names, and the parent holds that address) | **Closed** 2026-11-21: CAA records name the home's own ACME account (`accounturi`, RFC 8657), whose key never leaves the home, and forbid wildcards. Another account was refused ("Certificates and CAA") |
 | 6 | It sees traffic metadata: clients' addresses, the names they ask for (SNI, so the fragments' names), sizes and timing, and the names the home resolves | Inherent to the parent carrying the bytes; DNS over TLS would hide the last |

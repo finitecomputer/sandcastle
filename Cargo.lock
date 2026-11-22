@@ -1020,6 +1020,7 @@ dependencies = [
  "base64",
  "hex",
  "libc",
+ "ring",
  "rsa",
  "rustls",
  "rustls-pki-types",
