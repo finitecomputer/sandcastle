@@ -1,0 +1,34 @@
+[package]
+name = "sandcastle-nitro-issuer"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "A home's wildcard certificate, from its own CSR, by ACME DNS-01 on the operator's side (docs/nitro-issuer.md)"
+
+[[bin]]
+name = "nitro-issuer"
+path = "src/main.rs"
+
+[features]
+# The issuer's half: its ACME account, the order's DNS-01 through the zone's
+# API, and CAA. A home builds without it (`--no-default-features`): its key,
+# its CSR and the check of what it is given, and no code that talks to a CA
+# or to the zone.
+default = ["issuer"]
+issuer = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-rustls", "dep:hyper-util", "dep:instant-acme", "dep:serde_json", "dep:tokio"]
+
+[dependencies]
+rcgen.workspace = true
+time.workspace = true
+x509-parser = "=0.18.1"
+bytes = { version = "=1.12.1", optional = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+# The issuer's two HTTPS clients (Let's Encrypt's, inside instant-acme, and
+# the zone's API) are one stack: hyper-rustls with ring and the system's
+# roots, as instant-acme builds its own.
+hyper-rustls = { version = "=0.27.10", default-features = false, features = ["http1", "ring", "rustls-platform-verifier", "tls12"], optional = true }
+hyper-util = { workspace = true, features = ["client-legacy", "http1"], optional = true }
+instant-acme = { version = "=0.8.5", default-features = false, features = ["hyper-rustls", "ring"], optional = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt", "macros", "time"], optional = true }
