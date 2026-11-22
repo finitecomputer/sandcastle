@@ -352,6 +352,50 @@ mod linux {
         }
     }
 
+    /// One ask to the key service (docs/nitro-keys.md) through the parent's
+    /// relay on `port`, and its answer.
+    fn keys_ask(port: u32, ask: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let mut s = dial(CID_HOST, port).map_err(|e| format!("the key service: {e}"))?;
+        s.set_read_timeout(Some(Duration::from_millis(IO_MS_MAX))).map_err(|e| e.to_string())?;
+        s.write_all(format!("{ask}\n").as_bytes()).map_err(|e| e.to_string())?;
+        let mut line = String::new();
+        BufReader::new(s).take(64 * 1024).read_line(&mut line).map_err(|e| e.to_string())?;
+        serde_json::from_str(line.trim()).map_err(|_| format!("the key service said: {}", line.trim()))
+    }
+
+    /// `keys release`: this home's key from the key service, for the image
+    /// this guest's own document attests, sealed to a key made here.
+    fn keys_run(args: &[String]) -> Result<(), String> {
+        let usage = "usage: nitro-key keys release --port P --home H --out FILE [--entry LOG-ENTRY.json]";
+        if args.first().map(String::as_str) != Some("release") {
+            return Err(usage.into());
+        }
+        let port: u32 = flag(args, "--port").ok_or(usage)?.parse().map_err(|_| usage)?;
+        let home = flag(args, "--home").ok_or(usage)?;
+        let out = flag(args, "--out").ok_or(usage)?;
+        let entry = match flag(args, "--entry") {
+            Some(path) => Some(serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).map_err(|e| format!("{path}: {e}"))?).map_err(|e| format!("{path}: {e}"))?),
+            None => None,
+        };
+        let t0 = Instant::now();
+        let nonce = keys_ask(port, &serde_json::json!({"ask": "nonce"}))?;
+        let nonce = nonce["nonce"].as_str().and_then(|n| hex::decode(n).ok()).ok_or(format!("no nonce: {nonce}"))?;
+        let private = RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).map_err(|e| e.to_string())?;
+        let public = private.to_public_key().to_public_key_der().map_err(|e| e.to_string())?.as_bytes().to_vec();
+        let document = nsm::attest(Some(&nonce), Some(&public))?;
+        let answer = keys_ask(port, &serde_json::json!({"ask": "release", "home": home, "document": base64::engine::general_purpose::STANDARD.encode(document), "entry": entry}))?;
+        match answer["answer"].as_str() {
+            Some("released") => {
+                let sealed = answer["key"].as_str().and_then(|k| base64::engine::general_purpose::STANDARD.decode(k).ok()).ok_or("no key in the answer")?;
+                let key = private.decrypt(rsa::Oaep::new::<Sha256>(), &sealed).map_err(|e| format!("the key does not open: {e}"))?;
+                write_key(out, &key)?;
+                println!("{}", serde_json::json!({"released": answer["why"], "key_sha256": hex::encode(Sha256::digest(&key)), "ms": t0.elapsed().as_millis() as u64}));
+                Ok(())
+            }
+            _ => Err(format!("refused: {}", answer["why"].as_str().unwrap_or("(no reason)"))),
+        }
+    }
+
     pub fn run(args: Vec<String>) -> Result<(), String> {
         let mode = args.first().map(String::as_str).unwrap_or("");
         if mode == "settime" {
@@ -376,6 +420,9 @@ mod linux {
         }
         if mode == "disk" {
             return disk_run(&args[1..]);
+        }
+        if mode == "keys" {
+            return keys_run(&args[1..]);
         }
         let out = flag(&args, "--out").ok_or("--out <file>")?;
         let t0 = Instant::now();

@@ -3,7 +3,7 @@
 # (docs/krun-spike.md, Dependencies).
 [workspace]
 resolver = "2"
-members = ["crates/wire", "crates/vm", "crates/guest", "crates/rootfs", "crates/egress", "crates/engine", "crates/krun-spike", "crates/nitro-attest", "crates/nitro-key", "crates/nitro-probe", "crates/nitro-spike", "crates/nitro-home"]
+members = ["crates/wire", "crates/vm", "crates/guest", "crates/rootfs", "crates/egress", "crates/engine", "crates/krun-spike", "crates/nitro-attest", "crates/nitro-key", "crates/nitro-probe", "crates/nitro-spike", "crates/nitro-home", "crates/nitro-keys"]
 
 [workspace.package]
 edition = "2021"
@@ -17,7 +17,11 @@ sandcastle-egress = { path = "crates/egress" }
 sandcastle-engine = { path = "crates/engine" }
 sandcastle-nitro-attest = { path = "crates/nitro-attest" }
 sandcastle-nitro-probe = { path = "crates/nitro-probe" }
+sandcastle-nitro-keys = { path = "crates/nitro-keys" }
 hex = "=0.4.3"
+# The key service's owner statements: nostr's BIP-340 signatures, as
+# fragment's nip98 verifies them (the same pin).
+k256 = { version = "=0.13.4", default-features = false, features = ["schnorr"] }
 http-body-util = "=0.1.5"
 hyper = { version = "=1.11.0", features = ["http1", "server", "client"] }
 hyper-util = { version = "=0.1.20", features = ["tokio"] }
