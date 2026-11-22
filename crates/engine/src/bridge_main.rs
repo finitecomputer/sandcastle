@@ -12,7 +12,10 @@
 //!   is a home on the parent itself: the engine's socket on this host in
 //!   place of the host's over vsock. Each `--remote <name>=<end>` is an
 //!   engine on another parent this home also drives, over the network
-//!   (sessions only; docs/nitro.md, "Computers on other parents").
+//!   (sessions only; docs/nitro.md, "Computers on other parents"), and its
+//!   `,egress=<end>` where that engine is to send this home's computers'
+//!   egress; `--egress-to <end>` is the same for this parent's engine
+//!   (several homes on one parent).
 //! - `parent --vsock <uds> --engine <engine.sock> [--ports <ports.sock>]
 //!   [--intercepts <path>] [--egress <path>] [--owner <uid>:<gid>]`: on the
 //!   parent. `--egress` is where the engine hands its computers' egress
@@ -31,7 +34,7 @@ use std::process::ExitCode;
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: sandcastle-bridge home [--dir <dir>] [--intercepts <path>] [--owner <uid>:<gid>] [--sessions <dir> --pins <file>] [--up <engine.sock>] [--remote <name>=<tcp:addr:port|unix:/path>]...\n       \
+        "usage: sandcastle-bridge home [--dir <dir>] [--intercepts <path>] [--owner <uid>:<gid>] [--sessions <dir> --pins <file>] [--up <engine.sock>] [--egress-to <end>] [--remote <name>=<end>[,egress=<end>]]...\n       \
          sandcastle-bridge parent --vsock <uds> --engine <engine.sock> [--ports <ports.sock>] [--intercepts <path>] [--egress <path>] [--owner <uid>:<gid>]\n       \
          sandcastle-bridge relay --listen <unix:/path|tcp:addr:port> --to <unix:/path|tcp:addr:port> [--allow <cidr>]... [--owner <uid>:<gid>]"
     );
@@ -62,13 +65,23 @@ fn main() -> ExitCode {
             up: flag("--up").map(PathBuf::from),
             egress_at: flag("--egress").map(PathBuf::from),
             remotes: {
-                let remotes: Option<Vec<(String, bridge::End)>> = args
-                    .windows(2)
-                    .filter(|w| w[0] == "--remote")
-                    .map(|w| w[1].split_once('=').and_then(|(n, e)| Some((n.to_string(), e.parse().ok()?))).filter(|(n, _)| !n.is_empty() && n != "local"))
-                    .collect();
+                // `<name>=<end>[,egress=<end>]`
+                let remote = |spec: &str| -> Option<(String, bridge::End, Option<bridge::End>)> {
+                    let (name, rest) = spec.split_once('=')?;
+                    let (api, egress) = match rest.split_once(",egress=") {
+                        Some((api, egress)) => (api, Some(egress.parse().ok()?)),
+                        None => (rest, None),
+                    };
+                    (!name.is_empty() && name != "local").then(|| Some((name.to_string(), api.parse().ok()?, egress)))?
+                };
+                let remotes: Option<Vec<_>> = args.windows(2).filter(|w| w[0] == "--remote").map(|w| remote(&w[1])).collect();
                 let Some(remotes) = remotes else { return usage() };
                 remotes
+            },
+            egress_to: match flag("--egress-to").map(|e| e.parse::<bridge::End>()) {
+                Some(Ok(e)) => Some(e),
+                Some(Err(_)) => return usage(),
+                None => None,
             },
         }),
         Some("parent") => {

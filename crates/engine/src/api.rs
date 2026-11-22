@@ -172,6 +172,12 @@ pub struct StartRequest {
     pub allow: Vec<String>,
     #[serde(default)]
     pub deny: Vec<String>,
+    /// sandcastle's own: on a node of sessions, where this computer's egress
+    /// sessions go (`unix:/<path>` or `tcp:<address>:<port>`), one of the
+    /// node's `nitro.session_egress_allow`; none, the node's own
+    /// `session_egress`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress_to: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -225,6 +231,9 @@ impl StartRequest {
         }
         if let Some(image) = &self.image {
             sandcastle_rootfs::Reference::parse(image).map_err(|e| invalid(e.to_string()))?;
+        }
+        if let Some(to) = &self.egress_to {
+            to.parse::<crate::ends::End>().map_err(|e| invalid(format!("egressTo: {e}")))?;
         }
         if let Some(e) = &self.entrypoint {
             if e.is_empty() {
@@ -619,4 +628,23 @@ mod tests {
         assert_eq!(percent_decode("bad%zz%4"), "bad%zz%4");
     }
 
+
+    /// Goal: a start's egressTo reads as an end or the start is refused;
+    /// with none, nothing changes, and it is never written when absent.
+    #[test]
+    fn a_starts_egress_end_is_an_end() {
+        let start = |extra: serde_json::Value| {
+            let mut v = serde_json::json!({ "image": "img", "enableInternet": false });
+            v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            serde_json::from_value::<StartRequest>(v).unwrap()
+        };
+        assert!(start(serde_json::json!({})).validate().is_ok());
+        for good in ["unix:/run/nitro-home/t1/egress.sock", "tcp:10.0.1.5:5104"] {
+            assert!(start(serde_json::json!({ "egressTo": good })).validate().is_ok(), "{good}");
+        }
+        for bad in ["/run/x.sock", "tcp:10.0.1.5", "udp:10.0.1.5:1", ""] {
+            assert!(matches!(start(serde_json::json!({ "egressTo": bad })).validate(), Err(ApiError::Invalid(m)) if m.contains("egressTo")), "{bad}");
+        }
+        assert!(serde_json::to_value(start(serde_json::json!({}))).unwrap().get("egressTo").is_none());
+    }
 }

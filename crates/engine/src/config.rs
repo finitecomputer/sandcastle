@@ -98,6 +98,14 @@ pub struct NitroConfig {
     /// have nowhere to go.
     #[serde(default)]
     pub session_egress: Option<PathBuf>,
+    /// The ends a start may name for its computer's egress sessions
+    /// (`egressTo`) in place of `session_egress`: `unix:/<dir>/` (a socket
+    /// below it) or `tcp:<cidr>`. Several homes' computers on one node,
+    /// or a home's on another node, each reach their own home this way
+    /// (docs/nitro.md, "Computers on other parents"). Empty, a start names
+    /// none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub session_egress_allow: Vec<String>,
 }
 
 fn firecracker() -> String {
@@ -169,6 +177,9 @@ impl EngineConfig {
             }
         }
         if let Some(n) = &self.nitro {
+            for a in &n.session_egress_allow {
+                a.parse::<crate::ends::Allowed>().map_err(|e| ConfigError(format!("nitro.session_egress_allow: {e}")))?;
+            }
             for (name, f) in [("nitro.firecracker", &n.firecracker), ("nitro.kernel", &n.kernel), ("nitro.mke2fs", &n.mke2fs), ("nitro.nft", &n.nft)] {
                 if f.is_empty() || f.contains('/') || f == "." || f == ".." {
                     return Err(ConfigError(format!("{name}: a file name in lib_dir")));
@@ -276,7 +287,7 @@ pub(crate) mod tests {
         assert!(bad(&|c| c.state_dir = "/".into()));
         assert!(bad(&|c| c.vms_max = 0));
         assert!(bad(&|c| c.uid_base = 1000));
-        let n = |firecracker: &str, kernel: &str, mke2fs: &str| Some(NitroConfig { firecracker: firecracker.into(), kernel: kernel.into(), mke2fs: mke2fs.into(), nft: "nitro-nft".into(), confidential: true, cpu_overcommit: false, session_required: false, session_egress: None });
+        let n = |firecracker: &str, kernel: &str, mke2fs: &str| Some(NitroConfig { firecracker: firecracker.into(), kernel: kernel.into(), mke2fs: mke2fs.into(), nft: "nitro-nft".into(), confidential: true, cpu_overcommit: false, session_required: false, session_egress: None, session_egress_allow: vec![] });
         assert!(bad(&|c| c.nitro = n("../firecracker", "k", "m")));
         assert!(bad(&|c| c.nitro = n("firecracker", "", "m")));
         assert!(bad(&|c| c.nitro = n("firecracker", "k", "/usr/sbin/mke2fs")));

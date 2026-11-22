@@ -242,6 +242,9 @@ pub struct Engine {
     builds: tokio::sync::Mutex<()>,
     /// One measure at a time: each boots a sandbox.
     measures: tokio::sync::Mutex<()>,
+    /// The ends a start may name for its computer's egress
+    /// (`nitro.session_egress_allow`).
+    egress_allow: Vec<crate::ends::Allowed>,
     sockets: super::ports::NetnsSockets,
 }
 
@@ -400,6 +403,7 @@ impl Engine {
             std::fs::rename(&part, &boot_disk).map_err(internal("publishing the boot disk"))?;
         }
         let refs = std::fs::read(c.images().join("refs.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let egress_allow = c.nitro.as_ref().map(|n| n.session_egress_allow.iter().map(|a| a.parse()).collect::<Result<Vec<_>, _>>()).transpose().map_err(ApiError::Internal)?.unwrap_or_default();
         let engine = Engine {
             inner: Mutex::new(Inner { slots: Slots::new(c.vms_max), vms: HashMap::new(), ended: BTreeMap::new(), memory_mib: 0, refs }),
             config,
@@ -410,6 +414,7 @@ impl Engine {
             nitro,
             builds: tokio::sync::Mutex::new(()),
             measures: tokio::sync::Mutex::new(()),
+            egress_allow,
             sockets: super::ports::NetnsSockets::start().map_err(internal("the sockets thread"))?,
         };
         engine.sweep_snapshots();
@@ -420,16 +425,39 @@ impl Engine {
         &self.config
     }
 
+    /// Where a start's computer's egress sessions go: the end it names
+    /// (`egressTo`), if the node allows it, else the node's own
+    /// `session_egress`. A start that names one on a node without sessions,
+    /// or one the node does not allow, is refused.
+    fn egress_target(&self, req: &StartRequest) -> Result<Option<crate::ends::End>, ApiError> {
+        let session_node = self.config.nitro.as_ref().filter(|n| n.session_required);
+        match (&req.egress_to, session_node) {
+            (Some(_), None) => Err(ApiError::Invalid("egressTo: this node's computers take no attested session".into())),
+            (Some(to), Some(_)) => {
+                let end: crate::ends::End = to.parse().map_err(|e| ApiError::Invalid(format!("egressTo: {e}")))?;
+                if !crate::ends::allowed(&self.egress_allow, &end) {
+                    return Err(ApiError::Invalid(format!("egressTo: {to} is not one this node allows (nitro.session_egress_allow)")));
+                }
+                Ok(Some(end))
+            }
+            (None, Some(n)) => Ok(n.session_egress.clone().map(crate::ends::End::Unix)),
+            (None, None) => Ok(None),
+        }
+    }
+
     /// A node of sessions' second socket per VM: where its runner hands each
-    /// of the guest's egress sessions, relayed unread to the home
-    /// (`NitroConfig::session_egress`). None on any other node.
-    fn session_egress(&self, run_dir: &Path) -> Result<Option<(tokio::net::UnixListener, Option<PathBuf>)>, ApiError> {
-        let Some(n) = self.config.nitro.as_ref().filter(|n| n.session_required) else { return Ok(None) };
+    /// of the guest's egress sessions, relayed unread to the computer's home
+    /// (`egress_target`). None on any other node.
+    fn session_egress(&self, run_dir: &Path, req: &StartRequest) -> Result<Option<(tokio::net::UnixListener, Option<crate::ends::End>)>, ApiError> {
+        if !self.config.nitro.as_ref().is_some_and(|n| n.session_required) {
+            return Ok(None);
+        }
+        let target = self.egress_target(req)?;
         let sock = run_dir.join(sandcastle_vm::paths::SESSION_EGRESS_SOCK);
         let _ = std::fs::remove_file(&sock);
         let listener = tokio::net::UnixListener::bind(&sock).map_err(internal("binding the session egress socket"))?;
         mode(&sock, 0o777).map_err(internal("the session egress socket's mode"))?;
-        Ok(Some((listener, n.session_egress.clone())))
+        Ok(Some((listener, target)))
     }
 
     /// Where a running computer's attested session is relayed: only a
@@ -1026,6 +1054,7 @@ impl Engine {
                 return Err(refused);
             }
         }
+        self.egress_target(&req)?;
         let (image, snapshot) = match (&req.image, &req.container_snapshot) {
             (Some(reference), None) => (self.image(reference).await?, None),
             (None, Some(s)) => {
@@ -1155,7 +1184,7 @@ impl Engine {
         let sock = run_dir.join(EGRESS_SOCK);
         let listener = tokio::net::UnixListener::bind(&sock).map_err(internal("binding the egress socket"))?;
         mode(&sock, 0o777).map_err(internal("the egress socket's mode"))?;
-        let session_egress = self.session_egress(&run_dir)?;
+        let session_egress = self.session_egress(&run_dir, &req)?;
         let egress_task = tokio::spawn(serve_egress(egress.clone(), listener, session_egress));
 
         // The process: the start's entrypoint or the image's, the image's
@@ -1395,7 +1424,7 @@ impl Engine {
         let _ = std::fs::remove_file(&sock);
         let listener = tokio::net::UnixListener::bind(&sock).map_err(internal("rebinding the egress socket"))?;
         mode(&sock, 0o777).map_err(internal("the egress socket's mode"))?;
-        let session_egress = self.session_egress(&run_dir)?;
+        let session_egress = self.session_egress(&run_dir, req)?;
         let egress_task = tokio::spawn(serve_egress(egress.clone(), listener, session_egress));
         let mut env: BTreeMap<String, String> = BTreeMap::new();
         for e in image.config.env.clone().unwrap_or_default() {
@@ -1724,7 +1753,7 @@ async fn wait_event(l: &mut Launched, name: &str) -> Result<Value, ApiError> {
 
 /// A VM's egress for its life: the proxy, and on a node of sessions the
 /// relay of the guest's egress sessions to its home, which decides there.
-async fn serve_egress(egress: Arc<Egress>, listener: tokio::net::UnixListener, session: Option<(tokio::net::UnixListener, Option<PathBuf>)>) {
+async fn serve_egress(egress: Arc<Egress>, listener: tokio::net::UnixListener, session: Option<(tokio::net::UnixListener, Option<crate::ends::End>)>) {
     let Some((sessions, home)) = session else {
         return egress.serve(listener).await;
     };
@@ -1734,15 +1763,27 @@ async fn serve_egress(egress: Arc<Egress>, listener: tokio::net::UnixListener, s
             let Ok((mut guest, _)) = sessions.accept().await else { continue };
             let home = home.clone();
             tokio::spawn(async move {
-                let Some(home) = home else { return };
-                let Ok(mut to) = tokio::net::UnixStream::connect(&home).await else { return };
                 // Ciphertext both ways; the session's ends see a cut.
-                let _ = tokio::io::copy_bidirectional(&mut guest, &mut to).await;
+                match home {
+                    Some(crate::ends::End::Unix(at)) => {
+                        let Ok(mut to) = tokio::net::UnixStream::connect(&at).await else { return };
+                        let _ = tokio::io::copy_bidirectional(&mut guest, &mut to).await;
+                    }
+                    Some(crate::ends::End::Tcp(at)) => {
+                        let Ok(Ok(mut to)) = tokio::time::timeout(EGRESS_DIAL_WAIT, tokio::net::TcpStream::connect(at)).await else { return };
+                        let _ = to.set_nodelay(true);
+                        let _ = tokio::io::copy_bidirectional(&mut guest, &mut to).await;
+                    }
+                    None => {}
+                }
             });
         }
     };
     tokio::join!(egress.serve(listener), relay);
 }
+
+/// How long a computer's egress session waits for its home's end to take it.
+const EGRESS_DIAL_WAIT: Duration = Duration::from_secs(5);
 
 /// Why a Nitro node takes no snapshot: the scratch disk is ciphertext under
 /// a key only its guest held, gone with it.
