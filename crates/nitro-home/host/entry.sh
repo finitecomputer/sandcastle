@@ -198,9 +198,10 @@ export AWS_REGION=$HOME_REGION CELLD_BUCKET=$SEALED
 # 10 s). A crash costs nothing for it: the next start takes over from its
 # own predecessor at once (proved: back in 14 s either way).
 # the home's size (its launcher conf, none secret): idle cells evicted
-# after HOME_IDLE_EVICT_S, at most HOME_MAX_RESIDENT_CELLS resident (celld's
-# own defaults when unset: none evicted, no cap)
-[ -z "${HOME_IDLE_EVICT_S:-}" ] || export CELLD_IDLE_EVICT_S=$HOME_IDLE_EVICT_S
+# after HOME_IDLE_EVICT_S (default 300 s, so its memory follows its active
+# fragments; `off` keeps every cell it ever touched, celld's own default), at
+# most HOME_MAX_RESIDENT_CELLS resident (no cap when unset)
+[ "${HOME_IDLE_EVICT_S:-300}" = off ] || export CELLD_IDLE_EVICT_S=${HOME_IDLE_EVICT_S:-300}
 [ -z "${HOME_MAX_RESIDENT_CELLS:-}" ] || export CELLD_MAX_RESIDENT_CELLS=$HOME_MAX_RESIDENT_CELLS
 release=$(cat $R/release-id)
 if [ "$(cat $STATE/deployed 2>/dev/null || true)" != "$release" ]; then
