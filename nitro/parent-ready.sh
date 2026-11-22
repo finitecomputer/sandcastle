@@ -22,7 +22,8 @@
 #     archive checked against the SHA-256 pinned here.
 #  4. Build tools for the guest kernel and the spike's crates, and Rust
 #     (pinned) for the user who builds.
-#  5. The slot budget raised to SLOTS (4, then steps of 8).
+#  5. The slot budget raised to SLOTS (4, then steps of 8), now and at
+#     every boot (nitro-slots.service: the driver starts at 4 each boot).
 #  6. /dev/nitro_enclaves in a group of its own (NITRO_GROUP), by a udev
 #     rule, so sandcastle's jailed VM uids open it as they open /dev/kvm
 #     elsewhere, never as root.
@@ -127,10 +128,28 @@ fi
 chgrp "$NITRO_GROUP" /dev/nitro_enclaves
 chmod 0660 /dev/nitro_enclaves
 
-# 7. Slots: only up, in steps of 8 (the parent rounds a value up).
+# 7. Slots: only up, in steps of 8 (the parent rounds a value up). The
+# driver starts at 4 at every boot, so a oneshot unit raises them again
+# before the engine and the homes start (the engine's unit wants it,
+# docs/nitro.md "Restarts"); it fails, visibly, if the driver is not there.
 if [ "$(cat $NE/pcie_slots)" -lt "$SLOTS" ]; then
     echo "$SLOTS" > $NE/pcie_slots
 fi
+cat > /etc/systemd/system/nitro-slots.service <<UNIT
+[Unit]
+Description=Nitro Sandboxes' slot budget, raised at every boot (the driver starts at 4)
+Before=sandcastle-vms.service sandcastle-engine.service nitro-home.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'test "\$\$(cat $NE/pcie_slots)" -ge $SLOTS || echo $SLOTS > $NE/pcie_slots'
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable -q nitro-slots.service
 
 # 8. The facts. No instance id, AMI id or address: they go into a public
 # repository.

@@ -57,3 +57,19 @@ by a temporary home half of lane A's own):
 No `ended` for it until its destroy, 0 restarts of the engine's unit; after
 the destroy, no computer and no `vm-` cgroup were left, and the home was
 still active.
+
+## The slot budget at every boot (S2's gap)
+
+Lane B found that the Nitro driver's sandbox slot budget
+(`/sys/class/misc/nitro_enclaves/pcie_slots`) is back at 4 after every
+boot: `parent-ready.sh` had raised it by one write. With 4, a parent fits
+its home, a measuring boot and two computers. The shared parent had been at
+4 since the S2 reboot; it is back at 12 at runtime (nothing restarted),
+with `nitro-slots.service` installed and the engine's unit wanting it. On
+lane A's second parent:
+
+| Step | The slot budget |
+|---|---|
+| after an EC2 start (a boot) | 4 |
+| `parent-ready.sh` with `SLOTS=12` (it now installs `nitro-slots.service`) | 12; the unit enabled |
+| after a reboot | **12**: the unit finished 2.4 s into the boot, the engine started after it at 3.9 s |
