@@ -721,7 +721,7 @@ mod relay_tests {
     fn ends_and_ranges_read_as_written() {
         assert_eq!("unix:/run/x.sock".parse::<End>(), Ok(End::Unix("/run/x.sock".into())));
         assert_eq!("tcp:10.0.1.5:5100".parse::<End>(), Ok(End::Tcp("10.0.1.5:5100".parse().unwrap())));
-        for bad in ["unix:run/x", "tcp:10.0.1.5", "udp:1.2.3.4:5", "/run/x.sock", ""] {
+        for bad in ["unix:run/x", "tcp:10.0.1.5", "udp:10.9.9.9:5", "/run/x.sock", ""] {
             assert!(bad.parse::<End>().is_err(), "{bad}");
         }
         let vpc: Cidr = "10.0.0.0/16".parse().unwrap();
@@ -731,7 +731,7 @@ mod relay_tests {
         assert!(!vpc.contains("fd00::1".parse().unwrap()));
         let one: Cidr = "10.0.1.5".parse().unwrap();
         assert!(one.contains("10.0.1.5".parse().unwrap()) && !one.contains("10.0.1.6".parse().unwrap()));
-        assert!("0.0.0.0/0".parse::<Cidr>().unwrap().contains("192.0.2.1".parse().unwrap()));
+        assert!("0.0.0.0/0".parse::<Cidr>().unwrap().contains("10.200.0.1".parse().unwrap()));
         assert!("fd00::/8".parse::<Cidr>().unwrap().contains("fd12::1".parse().unwrap()));
         for bad in ["10.0.0.0/33", "fd00::/129", "10.0.0/8", "x"] {
             assert!(bad.parse::<Cidr>().is_err(), "{bad}");
