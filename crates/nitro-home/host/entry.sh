@@ -190,6 +190,13 @@ m0=$(date +%s%N)
 /usr/local/bin/celld seal-bucket migrate --from "$HOME_BUCKET" --to "$SEALED" --region "$HOME_REGION" > $LOG/seal-migrate.log 2>&1 || { tail -c 2000 $LOG/seal-migrate.log; die "the bucket's migration"; }
 say "the bucket sealed in $(ms_since "$m0") ms ($(tail -n 1 $LOG/seal-migrate.log | tr -cd '[:alnum:] ,:.()-' | cut -c1-100))"
 export AWS_REGION=$HOME_REGION CELLD_BUCKET=$SEALED
+# A home is one node: nothing to balance (CELLD_REBALANCE_INTERVAL_MS=0),
+# and its fleet sample and lease renewals are bucket writes that tell no one
+# anything new while it idles. Its fleet is sampled every
+# HOME_FLEET_SAMPLE_MS (default 10 min, celld's own 5 s), and its lease lives
+# HOME_LEASE_TTL_MS (default 5 min, renewed every third of that; celld's own
+# 10 s). A crash costs nothing for it: the next start takes over from its
+# own predecessor at once (proved: back in 14 s either way).
 # the home's size (its launcher conf, none secret): idle cells evicted
 # after HOME_IDLE_EVICT_S, at most HOME_MAX_RESIDENT_CELLS resident (celld's
 # own defaults when unset: none evicted, no cap)
@@ -204,6 +211,7 @@ if [ "$(cat $STATE/deployed 2>/dev/null || true)" != "$release" ]; then
 fi
 CELLD_WATCH=$STATE/celld CELLD_NODE=home CELLD_SECRETS_FILE=$R/celld-secrets.json CELLD_CONTAINER_ENGINE=$engine \
 CELLD_TRUST_FORWARDED_HEADERS=1 CELLD_DURABILITY=bucket CELLD_SHUTDOWN_TOTAL_MS=40000 \
+CELLD_REBALANCE_INTERVAL_MS=0 CELLD_FLEET_SAMPLE_MS=${HOME_FLEET_SAMPLE_MS:-600000} CELLD_TTL_MS=${HOME_LEASE_TTL_MS:-300000} \
 CELLD_FACET_MAX_BYTES=20971520 CELLD_DYNAMIC_LOCKDOWN=1 CELLD_MAX_CELL_REQUESTS=512 \
     /usr/local/bin/celld --no-control-plane --listen 127.0.0.1:8080 --internal-listen 127.0.0.1:8081 --region "$HOME_REGION" \
     > >(tee -a $LOG/celld.log | grep --line-buffered -E " (WARN|ERROR) |listening|panicked|^Error|^Caused by|^ +[0-9]+: ") 2>&1 &
