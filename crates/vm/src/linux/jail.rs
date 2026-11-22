@@ -6,7 +6,7 @@
 //! wait, then hands the VM's files back to the node's user.
 
 use std::ffi::CString;
-use std::os::fd::{AsRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
@@ -101,6 +101,14 @@ pub fn run(config_path: &Path, settings: &Settings, uid: u32, cgroup: Option<&Pa
         // SAFETY: leave without running the parent's destructors twice.
         unsafe { libc::_exit(127) };
     }
+    // The jailer joins its VM's cgroup, off the VM's boot (the child runs
+    // already): it is then not its engine's unit's, so an engine restart's
+    // stop does not reach it, and the next engine adopts the VM it holds.
+    if let Some(cg) = &cgroup {
+        if let Err(e) = join(cg) {
+            eprintln!("jailer: stays in the engine's cgroup ({e}): an engine restart ends this VM");
+        }
+    }
     let mut status = 0;
     // Bounded by the child's life: each pass reaps it or takes one signal.
     loop {
@@ -131,7 +139,7 @@ pub fn run(config_path: &Path, settings: &Settings, uid: u32, cgroup: Option<&Pa
 /// `cgroup.procs` migrates a process, which waits out an RCU grace period
 /// (13.7 ms of a 14.4 ms jail, measured); `clone3` with
 /// `CLONE_INTO_CGROUP` (Linux 5.7) starts the child there instead. The
-/// jailer itself stays in the engine's cgroup.
+/// jailer joins it after (`join`).
 fn fork_into(cgroup: Option<&OwnedFd>) -> std::io::Result<libc::pid_t> {
     // <linux/sched.h>'s struct clone_args, CLONE_ARGS_SIZE_VER2.
     #[repr(C)]
@@ -167,6 +175,19 @@ fn fork_into(cgroup: Option<&OwnedFd>) -> std::io::Result<libc::pid_t> {
         return Err(std::io::Error::last_os_error());
     }
     Ok(pid as libc::pid_t)
+}
+
+/// Moves this process into the cgroup `cg` is open on.
+fn join(cg: &OwnedFd) -> std::io::Result<()> {
+    // SAFETY: openat on a directory descriptor we own, with a NUL-terminated name.
+    let fd = unsafe { libc::openat(cg.as_raw_fd(), c"cgroup.procs".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: a descriptor openat just gave us.
+    let mut procs = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
+    // SAFETY: getpid has no preconditions.
+    std::io::Write::write_all(&mut procs, unsafe { libc::getpid() }.to_string().as_bytes())
 }
 
 fn chown(p: &Path, uid: u32, gid: u32) -> Result<(), JailerError> {

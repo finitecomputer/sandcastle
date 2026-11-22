@@ -1,9 +1,14 @@
-//! The engine's cgroup subtree (cgroup v2), delegated by its service
-//! manager. cgroup v2 keeps processes in leaves only, so the engine moves
-//! itself into `engine/` and makes one sibling per VM, `vm-<slot>`, with
-//! its memory, CPU, and process limits. A VM boots at full CPU and gets
-//! its instance's share once it says ready, so a `lite` VM's boot is not
-//! a sixteenth as fast.
+//! The VMs' cgroup subtree (cgroup v2), delegated by the service manager.
+//! cgroup v2 keeps processes in leaves only, and the subtree holds one
+//! leaf per VM, `vm-<slot>`, with its memory, CPU, and process limits; the
+//! VM and its jailer both live there. A VM boots at full CPU and gets its
+//! instance's share once it says ready, so a `lite` VM's boot is not a
+//! sixteenth as fast.
+//!
+//! The subtree is either a unit of its own (`vm_cgroup`), held by
+//! `sandcastle-engine hold` from a `keeper/` leaf, which an engine restart
+//! leaves alone; or the engine's own unit's, which the engine leaves for
+//! an `engine/` leaf (and which its unit's stop ends, VMs and all).
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -35,9 +40,18 @@ fn own() -> io::Result<PathBuf> {
 }
 
 impl Subtree {
-    /// Takes the subtree this process was given: moves itself into
-    /// `engine/` and enables the controllers its VMs need.
-    pub fn take() -> io::Result<Subtree> {
+    /// Takes the VMs' subtree: `held` (a unit of its own, its keeper in a
+    /// leaf), or the one this process was given, which it leaves for
+    /// `engine/`; then enables the controllers its VMs need.
+    pub fn take(held: Option<&Path>) -> io::Result<Subtree> {
+        if let Some(root) = held {
+            let procs = std::fs::read_to_string(root.join("cgroup.procs")).map_err(|e| io::Error::new(e.kind(), format!("{}: {e} (is its unit running `sandcastle-engine hold`?)", root.display())))?;
+            if !procs.trim().is_empty() {
+                return Err(io::Error::other(format!("{} holds processes of its own: its keeper must sit in a leaf (`sandcastle-engine hold`)", root.display())));
+            }
+            write(&root.join("cgroup.subtree_control"), "+memory +cpu +pids")?;
+            return Ok(Subtree { root: root.to_path_buf() });
+        }
         let mut root = own()?;
         // A restarted engine already sits in `engine/`.
         if root.file_name().is_some_and(|n| n == "engine") {
@@ -52,6 +66,20 @@ impl Subtree {
         write(&leaf.join("cgroup.procs"), &std::process::id().to_string())?;
         write(&root.join("cgroup.subtree_control"), "+memory +cpu +pids")?;
         Ok(Subtree { root })
+    }
+
+    /// A VMs' unit's keeper: moves this process into its unit's `keeper/`
+    /// leaf, so the unit's cgroup may hand its controllers to the VMs'.
+    pub fn hold() -> io::Result<PathBuf> {
+        let root = own()?;
+        let leaf = root.join("keeper");
+        match std::fs::create_dir(&leaf) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+        write(&leaf.join("cgroup.procs"), &std::process::id().to_string())?;
+        Ok(root)
     }
 
     pub fn vm(&self, slot: u32) -> PathBuf {

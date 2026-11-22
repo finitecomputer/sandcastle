@@ -274,7 +274,7 @@ impl Engine {
             chown(&d, 0, c.client_gid).map_err(internal("owning the state directory"))?;
             mode(&d, 0o710).map_err(internal("the state directory's mode"))?;
         }
-        let cgroups = Subtree::take().map_err(internal("taking the cgroup subtree"))?;
+        let cgroups = Subtree::take(c.vm_cgroup.as_deref()).map_err(internal("taking the cgroup subtree"))?;
         let ca = {
             let (cert, key) = (c.ca().join("ca.pem"), c.ca().join("ca.key"));
             match (std::fs::read_to_string(&cert), std::fs::read_to_string(&key)) {
