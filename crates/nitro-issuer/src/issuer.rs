@@ -49,9 +49,21 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
                 let csr = csr_der(&read(&need(args, "--csr")?, "--csr")?, &names)?;
                 let dns = Dns::open(&need(args, "--zone")?, Path::new(&need(args, "--token-file")?)).await?;
                 let account = account(Path::new(&need(args, "--state")?), staging).await?;
-                let chain = issue(&account, &dns, &names, &csr).await?;
-                write_atomic(Path::new(&need(args, "--out")?), chain.as_bytes(), 0o644)?;
+                let (chain, left) = issue(&account, &dns, &names, &csr).await;
+                write_atomic(Path::new(&need(args, "--out")?), chain?.as_bytes(), 0o644)?;
                 eprintln!("nitro-issuer: {} and {}: issued", names[0], names[1]);
+                if left > 0 {
+                    eprintln!("nitro-issuer: {left} challenge record(s) at {} left: `clean` removes them", challenge_name(&names[0]));
+                    return Ok(ExitCode::from(CHALLENGE_LEFT));
+                }
+                Ok(ExitCode::SUCCESS)
+            }
+            Some("clean") => {
+                let names = names(&need(args, "--home")?, &need(args, "--suffix")?)?;
+                let dns = Dns::open(&need(args, "--zone")?, Path::new(&need(args, "--token-file")?)).await?;
+                let at = challenge_name(&names[0]);
+                let gone = clear(&dns, &at).await?;
+                eprintln!("nitro-issuer: {gone} challenge record(s) at {at} removed");
                 Ok(ExitCode::SUCCESS)
             }
             Some("caa") => {
@@ -59,7 +71,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
                 caa(&dns, &need(args, "--suffix")?, &flags(args, "--account")).await?;
                 Ok(ExitCode::SUCCESS)
             }
-            _ => Err("account, issue or caa".into()),
+            _ => Err("account, issue, clean or caa".into()),
         }
     })
 }
@@ -110,10 +122,51 @@ fn acme(e: instant_acme::Error) -> String {
     format!("ACME: {e}")
 }
 
+/// `issue`'s exit when the certificate was issued and written but a
+/// challenge record could not be removed (`clean` removes it).
+const CHALLENGE_LEFT: u8 = 4;
+/// Tries at removing one challenge record, a second apart and doubling.
+const DELETE_TRIES: u32 = 3;
+
+/// Every TXT record at `at` (a home's challenge name, which the issuer
+/// alone writes) removed: how many were.
+async fn clear(dns: &Dns, at: &str) -> Result<usize> {
+    let left = dns.records("TXT").await?.into_iter().filter(|r| r["name"].as_str() == Some(at)).collect::<Vec<_>>();
+    for r in &left {
+        dns.delete(r["id"].as_str().unwrap_or_default()).await?;
+    }
+    Ok(left.len())
+}
+
 /// One order for `names`, proved by DNS-01 and finalized with the home's
-/// CSR: its certificate chain (PEM). The order's TXT records are removed
-/// whatever the outcome.
-async fn issue(account: &Account, dns: &Dns, names: &[String; 2], csr: &[u8]) -> Result<String> {
+/// CSR: its certificate chain (PEM), and how many of the order's TXT
+/// records could not be removed (each is tried, whatever the outcome).
+async fn issue(account: &Account, dns: &Dns, names: &[String; 2], csr: &[u8]) -> (Result<String>, usize) {
+    match order(account, dns, names, csr).await {
+        Ok((outcome, made)) => {
+            let at = challenge_name(&names[0]);
+            let mut left = 0;
+            for id in made {
+                let mut tries = 0;
+                while let Err(e) = dns.delete(&id).await {
+                    tries += 1;
+                    if tries == DELETE_TRIES {
+                        eprintln!("nitro-issuer: a challenge record at {at} was not removed: {e}");
+                        left += 1;
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_secs(1 << (tries - 1))).await;
+                }
+            }
+            (outcome, left)
+        }
+        Err(e) => (Err(e), 0),
+    }
+}
+
+/// The order itself: its outcome, and the records it made (to remove).
+/// An error here is one before any record was made.
+async fn order(account: &Account, dns: &Dns, names: &[String; 2], csr: &[u8]) -> Result<(Result<String>, Vec<String>)> {
     let identifiers: Vec<Identifier> = names.iter().map(|n| Identifier::Dns(n.clone())).collect();
     let mut order = account.new_order(&NewOrder::new(&identifiers)).await.map_err(acme)?;
     let mut answers = Vec::new();
@@ -131,12 +184,9 @@ async fn issue(account: &Account, dns: &Dns, names: &[String; 2], csr: &[u8]) ->
     // A run cut short leaves its records: the issuer owns this name, so they
     // go, and Let's Encrypt's resolvers are given a TTL to forget them (a
     // value they still hold fails the new order's check).
-    let left = dns.records("TXT").await?.into_iter().filter(|r| r["name"].as_str() == Some(at.as_str())).collect::<Vec<_>>();
-    for r in &left {
-        dns.delete(r["id"].as_str().unwrap_or_default()).await?;
-    }
-    if !left.is_empty() {
-        eprintln!("nitro-issuer: {} challenge record(s) of an earlier run at {at} removed; waiting {TTL} s", left.len());
+    let left = clear(dns, &at).await?;
+    if left > 0 {
+        eprintln!("nitro-issuer: {left} challenge record(s) of an earlier run at {at} removed; waiting {TTL} s");
         tokio::time::sleep(Duration::from_secs(TTL.into())).await;
     }
     let mut made = Vec::new();
@@ -172,12 +222,7 @@ async fn issue(account: &Account, dns: &Dns, names: &[String; 2], csr: &[u8]) ->
         order.poll_certificate(&retries).await.map_err(acme)
     }
     .await;
-    for id in made {
-        if let Err(e) = dns.delete(&id).await {
-            eprintln!("nitro-issuer: a challenge record at {at} was not removed: {e}");
-        }
-    }
-    outcome
+    Ok((outcome, made))
 }
 
 /// CAA at `suffix` becomes exactly `accounts` at Let's Encrypt, for names
@@ -191,24 +236,28 @@ async fn caa(dns: &Dns, suffix: &str, accounts: &[String]) -> Result<()> {
     let want = caa_records(accounts);
     let have = dns.records("CAA").await?;
     let (mut added, mut removed) = (0, 0);
-    let mut kept = Vec::new();
+    let (mut kept, mut gone) = (Vec::new(), Vec::new());
     for r in &have {
         let name = r["name"].as_str().unwrap_or_default();
         let tag_value = (r["data"]["tag"].as_str().unwrap_or_default().to_string(), r["data"]["value"].as_str().unwrap_or_default().to_string());
         match caa_fate(name, &tag_value, suffix, &want) {
             Fate::Keep => kept.push(tag_value),
-            Fate::Remove => {
-                dns.delete(r["id"].as_str().unwrap_or_default()).await?;
-                removed += 1;
-            }
+            Fate::Remove => gone.push(r["id"].as_str().unwrap_or_default().to_string()),
             Fate::Outside => {}
         }
     }
+    // the suffix's records first, then the rest removed: cut short at any
+    // point, no name under the suffix is left without a CAA that names the
+    // issuer alone or a stricter one of its own
     for (tag, value) in &want {
         if !kept.contains(&(tag.clone(), value.clone())) {
             dns.add_caa(suffix, tag, value).await?;
             added += 1;
         }
+    }
+    for id in &gone {
+        dns.delete(id).await?;
+        removed += 1;
     }
     eprintln!("nitro-issuer: {suffix}'s CAA names {} account(s): {added} added, {removed} removed at and below it", accounts.len());
     Ok(())

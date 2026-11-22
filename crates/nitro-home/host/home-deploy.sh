@@ -131,6 +131,25 @@ PATH="$SC/target/release:$PATH" "$SC/crates/nitro-home/host/pin-pcr0.sh" "$H/att
 # 5. switched onto, its health checked, back by itself on failure, once its
 # journal lets it start again
 journal_ok
+# a wildcard home (docs/nitro-issuer.md): its first start asks the issuer
+# for its certificate and holds its verdict until it has one, so the
+# issuer's round runs beside the switch, every 5 s, until the switch ends
+# (a home that already has one is found to serve, and nothing is ordered)
+answering=
+if grep -q '"certificate": *"wildcard"' "$H/home.json" 2>/dev/null; then
+    [ -n "$name" ] && [ -s "$H/parent-dir" ] || { say "a wildcard home is deployed with --home, its parent's directory in $H/parent-dir"; exit 1; }
+    issuer=${NITRO_ISSUER:-$SC/target/release/nitro-issuer}
+    [ -x "$issuer" ] || { say "$issuer: the issuer (cargo build --release -p sandcastle-nitro-issuer)"; exit 1; }
+    ( while :; do NITRO_ISSUER=$issuer "$SC/crates/nitro-issuer/issuer-sweep.sh" --parent "$(cat "$H/parent-dir")" "$name" > "$H/issuer-round.log" 2>&1 || true; sleep 5; done ) &
+    answering=$!
+fi
 say "switching"
-ssh $S "$P" "sudo SWITCH_S_MAX=${SWITCH_S_MAX:-300} bash $host/home-switch.sh $named $slot"
+switched=0
+ssh $S "$P" "sudo SWITCH_S_MAX=${SWITCH_S_MAX:-300} bash $host/home-switch.sh $named $slot" || switched=$?
+if [ -n "$answering" ]; then
+    kill "$answering" 2>/dev/null || true
+    wait "$answering" 2>/dev/null || true
+    say "the issuer's round: $(tail -n 1 "$H/issuer-round.log" 2>/dev/null | cut -c1-160)"
+fi
+[ "$switched" = 0 ] || exit "$switched"
 say "done in $(( $(date +%s) - t0 )) s"

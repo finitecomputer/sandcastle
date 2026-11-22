@@ -45,10 +45,11 @@
 #  6. then its first deploy (home-deploy.sh --home): sealed, built, staged,
 #     measured, pinned, started and routed;
 #  7. its certificate, one for its name and its fragments' wildcard
-#     (docs/nitro-issuer.md): the home asked at its first start, for a key
-#     it made and keeps; the issuer's round answers (nitro-issuer's
-#     issuer-sweep.sh, built here: NITRO_ISSUER, default the tree's
-#     target/release/nitro-issuer), and the home serves it within seconds.
+#     (docs/nitro-issuer.md): the home asks at its first start, for a key
+#     it makes and keeps; the issuer's round, which home-deploy.sh runs
+#     beside the switch (nitro-issuer's issuer-sweep.sh, built here:
+#     NITRO_ISSUER, default the tree's target/release/nitro-issuer),
+#     answers, and the home serves it within seconds.
 #
 # Secrets go only into the home's directory (owner-only) and its sealed
 # bundle; nothing secret is printed or passed on a command line. Every AWS
@@ -192,22 +193,12 @@ fi
 # 5. its DNS
 "$here/home-dns.py" "$P" point "$host" >&2
 
-# 6. its first deploy
+# 6. its first deploy (a wildcard home's certificate is answered during it)
+echo "$pdir" > "$H/parent-dir"
 door=$(python3 -I -c 'import json,sys; print(*json.load(open(sys.argv[1]))["door"])' "$P")
 NITRO_HOME_DIR=$H "$here/home-deploy.sh" --home "$name" --door $door
 
-# 7. its certificate: the issuer's round answers the home's request,
-# asked again while the home has not sent it yet
-issuer=${NITRO_ISSUER:-$here/../../../target/release/nitro-issuer}
-[ -x "$issuer" ] || { say "$issuer: the issuer (cargo build --release -p sandcastle-nitro-issuer)"; exit 1; }
-answered=3
-for _ in $(seq 60); do
-    answered=0
-    NITRO_ISSUER=$issuer "$here/../../nitro-issuer/issuer-sweep.sh" --parent "$pdir" "$name" || answered=$?
-    [ "$answered" = 3 ] || break
-    sleep 5
-done
-[ "$answered" = 0 ] || { say "the issuer did not answer its request"; exit 1; }
+# 7. its certificate, answered by the issuer's round during the deploy
 for _ in $(seq 60); do curl -s -o /dev/null -m 10 "https://$host/" && break; sleep 1; done
 curl -s -o /dev/null -m 10 "https://$host/" || { say "https://$host/ does not answer with a valid certificate"; exit 1; }
 python3 -I -c 'import json,sys; h=sys.argv[1]; print(json.dumps({"home": f"https://{h}", "door": f"https://{h}/__door"}))' "$host" > "$H/created"

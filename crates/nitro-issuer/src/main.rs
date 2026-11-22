@@ -14,6 +14,7 @@
 //! ```text
 //! nitro-issuer account --state <dir> [--staging]
 //! nitro-issuer issue --state <dir> --zone <zone> --token-file <file> --suffix <suffix> --home <name> --csr <csr.pem> --out <chain.pem> [--staging]
+//! nitro-issuer clean --zone <zone> --token-file <file> --suffix <suffix> --home <name>
 //! nitro-issuer caa --zone <zone> --token-file <file> --suffix <suffix> --account <uri> [--account <uri>]...
 //! nitro-issuer csr --key <key.pem> --names <a,b> --out <csr.pem>
 //! nitro-issuer verify --cert <chain.pem> (--key <key.pem> | --csr <csr.pem>) --names <a,b> [--renew-days <n>]
@@ -21,7 +22,9 @@
 //!
 //! `verify` exits 0 when the certificate serves, 3 when it serves but its
 //! renewal is due, 1 when it does not serve; the home checks it against its
-//! key, the issuer (which has no key) against the CSR's.
+//! key, the issuer (which has no key) against the CSR's. `issue` exits 4
+//! when its certificate was written but a challenge record could not be
+//! removed; `clean` removes a home's challenge records.
 //!
 //! The home's build (`--no-default-features`) is `csr` and `verify` alone:
 //! the ACME and DNS half (`issuer`, the default feature) is never in a home.
@@ -84,10 +87,10 @@ fn run(args: &[String]) -> Result<ExitCode> {
             })
         }
         #[cfg(feature = "issuer")]
-        Some("account" | "issue" | "caa") => issuer::run(args),
+        Some("account" | "issue" | "clean" | "caa") => issuer::run(args),
         #[cfg(not(feature = "issuer"))]
-        Some("account" | "issue" | "caa") => Err("the home's build is csr and verify alone (the issuer's has the `issuer` feature)".into()),
-        _ => Err("account, issue, caa, csr or verify (the source's head says how)".into()),
+        Some("account" | "issue" | "clean" | "caa") => Err("the home's build is csr and verify alone (the issuer's has the `issuer` feature)".into()),
+        _ => Err("account, issue, clean, caa, csr or verify (the source's head says how)".into()),
     }
 }
 
@@ -154,14 +157,31 @@ enum Verdict {
     RenewDue { days_left: i64 },
 }
 
+/// The certificates a chain holds, at most.
+const CHAIN_MAX: usize = 8;
+
 /// Whether `chain`'s first certificate serves for `public` (a key's public
-/// half) and `names` now:
+/// half) and `names` now, and the chain is whole (every block a
+/// certificate, the next one the first's issuer, which signed it: a download
+/// cut short after the first block is no chain):
 /// its public key the key's, its names exactly `names`, valid now; and
 /// whether its renewal is due (`renew_days` before it ends). Its chain to a
 /// root is each client's to check, as for any certificate.
 fn verify(chain: &str, public: &[u8], names: &[String], renew_days: i64, now: time::OffsetDateTime) -> Result<Verdict> {
-    let (_, pem) = x509_parser::pem::parse_x509_pem(chain.as_bytes()).map_err(|e| format!("the chain's PEM: {e}"))?;
-    let cert = pem.parse_x509().map_err(|e| format!("the certificate: {e}"))?;
+    let mut pems = Vec::new();
+    for pem in x509_parser::pem::Pem::iter_from_buffer(chain.as_bytes()) {
+        pems.push(pem.map_err(|e| format!("the chain's PEM: {e}"))?);
+        if pems.len() > CHAIN_MAX {
+            return Err(format!("a chain of more than {CHAIN_MAX} certificates"));
+        }
+    }
+    let certs = pems.iter().map(|p| p.parse_x509().map_err(|e| format!("the chain's certificate: {e}"))).collect::<Result<Vec<_>>>()?;
+    let [cert, next, ..] = certs.as_slice() else {
+        return Err("its chain holds no issuer: a certificate alone, or a download cut short".into());
+    };
+    if next.subject() != cert.issuer() || cert.verify_signature(Some(next.public_key())).is_err() {
+        return Err("the chain's second certificate is not the first's issuer".into());
+    }
     if cert.public_key().subject_public_key.data.as_ref() != public {
         return Err("its public key is not this key's".into());
     }
@@ -201,11 +221,13 @@ mod tests {
         let ca_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
         let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
         ca.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        ca.distinguished_name.push(rcgen::DnType::CommonName, "nitro-issuer test CA");
+        let ca_pem = ca.self_signed(&ca_key).unwrap().pem();
         let issuer = rcgen::Issuer::new(ca, ca_key);
         let mut p = rcgen::CertificateParams::new(names.to_vec()).unwrap();
         p.not_before = time::OffsetDateTime::now_utc() - time::Duration::days(1);
         p.not_after = time::OffsetDateTime::now_utc() + time::Duration::days(days) + time::Duration::hours(1);
-        p.signed_by(key, &issuer).unwrap().pem()
+        p.signed_by(key, &issuer).unwrap().pem() + &ca_pem
     }
 
     pub(crate) fn scratch(what: &str) -> PathBuf {
@@ -243,6 +265,15 @@ mod tests {
         assert!(verify(&certificate(&stranger, &home, 89), &public, &home, 30, now).unwrap_err().contains("not this key's"));
         assert!(verify(&certificate(&pair, &home[..1], 89), &public, &home, 30, now).unwrap_err().contains("its names"));
         assert!(verify(&certificate(&pair, &home, 89), &public, &home, 30, now + time::Duration::days(100)).unwrap_err().contains("not now"));
+        // a chain cut short: the leaf alone, or its issuer's block half there
+        let whole = certificate(&pair, &home, 89);
+        let leaf = &whole[..whole.find("-----END CERTIFICATE-----\n").unwrap() + 26];
+        assert!(verify(leaf, &public, &home, 30, now).unwrap_err().contains("holds no issuer"));
+        let cut = &whole[..whole.len() - 40];
+        assert!(verify(cut, &public, &home, 30, now).is_err(), "a second block cut short");
+        let other_ca = certificate(&pair, &home, 89);
+        let swapped = format!("{leaf}{}", &other_ca[other_ca.find("-----END CERTIFICATE-----\n").unwrap() + 26..]);
+        assert!(verify(&swapped, &public, &home, 30, now).unwrap_err().contains("not the first's issuer"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

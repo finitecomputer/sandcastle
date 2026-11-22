@@ -18,11 +18,11 @@ home spends one.
 
 | Part | Where | What it does |
 |---|---|---|
-| `nitro-issuer csr`, `verify` | the home (its build has no ACME or DNS code: `--no-default-features`) | the key (P-256, made once, 0600 on the encrypted disk) and its request for the two names; the check of a certificate against the key, the names and the clock (exit 0 serves, 3 serves and due for renewal, 1 does not) |
-| `tls.sh` | the home, sourced by `entry.sh` | the request sent at each boot, the issuer's answer taken once it serves, a renewal looked for once a minute while the one in use is due |
+| `nitro-issuer csr`, `verify` | the home (its build has no ACME or DNS code: `--no-default-features`) | the key (P-256, made once, 0600 on the encrypted disk) and its request for the two names; the check of a chain against the key, the names and the clock, the chain whole (its second certificate signed the first) (exit 0 serves, 3 serves and due for renewal, 1 does not) |
+| `tls.sh` | the home, sourced by `entry.sh` | the request sent at each boot and again each tick until it lands; the issuer's answer taken once it serves (a transfer curl reports failed is never taken); `caddy-tls` replaced only by a whole one; a renewal looked for once a minute while the one in use is due |
 | the mailbox | the home's own prefix in the fleet bucket: `tls/request.csr` and `tls/chain.pem` | only the home's fleet key and the operator reach it (the home's IAM user reaches its prefix alone); celld's sealed store is under `sealed/`, apart from it |
-| `nitro-issuer account`, `issue`, `caa` | the operator's machine | the issuer's ACME account (kept 0600 in its state directory); one order for a home's two names, from the home's name, never from its request, proved by TXT records at `_acme-challenge.<home>.<suffix>` that are removed whatever the outcome, and finalized with the home's request; the suffix's CAA |
-| `issuer-sweep.sh` | the operator's machine | its round over the homes: each home's request read, the answer already given kept while it serves and is not due, else an order and its chain written back; a home whose order failed is not ordered for again within an hour |
+| `nitro-issuer account`, `issue`, `clean`, `caa` | the operator's machine | the issuer's ACME account (kept 0600 in its state directory); one order for a home's two names, from the home's name, never from its request, proved by TXT records at `_acme-challenge.<home>.<suffix>` that are removed whatever the outcome (each tried three times; exit 4 when one is left, which `clean` removes), and finalized with the home's request; the suffix's CAA, its new records added before any old one is removed |
+| `issuer-sweep.sh` | the operator's machine | its round over the homes: a home's leftover challenge records removed first; each home's request read, the answer already given kept while it serves and is not due, else an order and its chain written back; a home whose order failed is not ordered for again within an hour |
 
 The Caddyfile of a wildcard home (`cargo xtask home render` with
 `"certificate": "wildcard"`) imports `/var/lib/fragment-home/tls/caddy-tls`
@@ -49,11 +49,15 @@ no other CA, may issue for anything under the suffix.
 ## A new home, and an existing one
 
 `home-create.sh` gives a new home `"certificate": "wildcard"`, points its
-names at the parent (no CAA of its own), deploys it, and runs the round for
-it until it is answered. For a home made before: add `"certificate":
-"wildcard"` to its `home.json`, render, deploy (`home-deploy.sh`), then run
-`issuer-sweep.sh --parent <dir> <home>`. A home whose conf says nothing is
-`acme`, as before, byte for byte.
+names at the parent (no CAA of its own), records the parent's directory
+(`<home dir>/parent-dir`) and deploys it. `home-deploy.sh` runs the
+issuer's round for a wildcard home every 5 s beside the switch, and the
+home's first start holds its verdict until it has its certificate (up to
+`HOME_CERT_WAIT_S`, 240 s, inside the switch's 300), so the switch sees it
+serve rather than roll back. For a home made before: add `"certificate":
+"wildcard"` to its `home.json`, write its `parent-dir`, render, and deploy
+(`home-deploy.sh --home <name>`). A home whose conf says nothing is `acme`,
+as before, byte for byte.
 
 ## Renewal
 
@@ -102,18 +106,21 @@ Ways past it, none of them done:
 | Step | Result |
 |---|---|
 | unit tests (`cargo test -p sandcastle-nitro-issuer`, both builds) | a home's names and their challenge name; the CAA set and what it removes (below the suffix only); a request for another home's names, or fewer, refused before an order; the key made once, 0600, kept; a certificate checked against the key and against the request (another key's, other names, not yet or no longer valid, due) |
-| `tls-test.sh` (the home's build, a local mailbox, a test CA) | 12 cases: the first boot's key and request; no answer yet; the answer taken; kept without reading the mailbox while it serves; a restart; refused: another key's, another home's names, garbage; due and not renewed yet (the same or another due one): kept; the renewal taken and the one before kept; older ones removed; an expired one replaced by a due one. A bug it found (a good certificate never taken) failed before its fix |
+| `tls-test.sh` (the home's build, a local mailbox, a test CA) | 16 cases: `mailbox` against a curl that gets its 200 and fails (000); the first boot's request lost, sent again at the next tick, the key 0600; no answer yet; a download cut short, and a chain without its issuer: not taken; the answer taken; kept without reading the mailbox while it serves; a restart; refused: another key's, another home's names, garbage; due and not renewed yet: kept; the renewal taken and the one before kept; older ones removed; an expired one replaced by a due one; `caddy-tls` not writable: left as it was, taken at the next tick. Watched failing before their fixes: a good certificate never taken; a cut-short transfer read as 200; a lost request never sent again; a chain without its issuer taken (the build before the chain check); a failed write reported as serving, `caddy-tls` left broken |
 | Caddy 2.11.9 in Docker, `admin off`, `--watch` | `caddy-tls` rewritten: the platform's name and the fragments' names served the new certificate 1,055 ms later; the old file deleted after, still served; the rendered wildcard Caddyfile is a valid configuration |
 | an order on Let's Encrypt's **staging** directory, for a name no home holds | issued in 23 s: both names, a 4-certificate chain, 64 days; `verify` against the home's key: serves; no `_acme-challenge` record left |
 | the suffix's CAA set to the issuer's production account | 2 records added; the 20 that `home-create.sh` had written at test1 to test10 removed; the system's resolver: the suffix's two records, none at a home's name, the owner's own name unchanged; a second run changed nothing |
 | an order by an account the CAA does not name (the issuer's staging account), for a new name | refused for both names: "CAA record for homes.&lt;zone&gt; prevents issuance"; its records removed |
 | a retry of a failed order within a minute | refused: "Incorrect TXT record … found": Let's Encrypt's other vantage points still held the first try's records (their TTL is 60 s); so a home is not ordered for again within the hour |
+| after the review's fixes, `caa` and `clean` against the real zone | no change: 0 added, 0 removed; 0 challenge records |
 | curl's own SigV4 on the home's prefix (`--aws-sigv4`, the home's fleet key on stdin) | PUT 200, GET 200, DELETE 204, then 404 |
 | **the loop end to end, on Let's Encrypt production**, for a check name (`lanea-check`) whose mailbox was a test home's prefix plus `lane-a-check/` | the home side (`tls.sh` itself) sent its request and found no answer; the round (`issuer-sweep.sh`) ordered, was issued in 20 s and wrote the chain back; the home side took it (`verify`: serves, 89 days); a second round ordered nothing ("serves, not due"); the chain verifies to the system's roots |
 | that certificate served by Caddy 2.11.9 (`import` of `caddy-tls`, `--watch`, `admin off`) | the platform's name and two fragments' names, each 200 with TLS checked against the system's roots; then the mailbox's objects deleted (204) and no `_acme-challenge` record left |
 
 ## What is left
 
+- **A deploy's switch with the round beside it** (`home-deploy.sh`), and
+  a home moved from `acme`, are not run yet: they need a parent.
 - **A real home on the wildcard**, its apps served: waits for a test home
   that can start (the test parent is refused `ec2:StartInstances`
   by an organization policy since 2026-11-22) and for lane B's rebuild of

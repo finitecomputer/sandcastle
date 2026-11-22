@@ -20,7 +20,9 @@ issuer = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-rustls", "d
 [dependencies]
 rcgen.workspace = true
 time.workspace = true
-x509-parser = "=0.18.1"
+# `verify`: a chain's second certificate signed its first (ring, which
+# rcgen already brings)
+x509-parser = { version = "=0.18.1", features = ["verify"] }
 bytes = { version = "=1.12.1", optional = true }
 http-body-util = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }

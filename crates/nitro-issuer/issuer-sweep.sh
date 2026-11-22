@@ -42,12 +42,14 @@ failed=0
 pending=0
 
 # <method> <name> <out> [curl args]: a call on the home's mailbox, its HTTP
-# status printed; the key goes to curl by its config on stdin
+# status printed, or 000 when curl itself failed (a transfer cut short
+# after its 200 among them); the key goes to curl by its config on stdin
 mailbox() {
-    local m=$1 k=$2 o=$3
+    local m=$1 k=$2 o=$3 code
     shift 3
-    printf 'user = "%s:%s"\n' "$(cat "$keys/access-key-id")" "$(cat "$keys/secret-access-key")" |
-        curl -sS -K - -m 30 --aws-sigv4 "aws:amz:$region:s3" -X "$m" -o "$o" -w '%{http_code}' "$@" "https://$bucket.s3.$region.amazonaws.com/$prefix/tls/$k" 2> /dev/null || true
+    code=$(printf 'user = "%s:%s"\n' "$(cat "$keys/access-key-id")" "$(cat "$keys/secret-access-key")" |
+        curl -sS -K - -m 30 --aws-sigv4 "aws:amz:$region:s3" -X "$m" -o "$o" -w '%{http_code}' "$@" "https://$bucket.s3.$region.amazonaws.com/$prefix/tls/$k" 2> /dev/null) || code=000
+    echo "$code"
 }
 
 # <chain>: it serves for the request's key and the home's names, not due
@@ -75,6 +77,15 @@ b = env["HOME_BUCKET"].removeprefix("s3://")
 print(b.split("/", 1)[0], b.split("/", 1)[1], env["HOME_REGION"])' "$H/launcher.json")
     keys=${ISSUER_AWS_DIR:-$H/secrets/aws}
     names="$name.$suffix,*.$name.$suffix"
+    # challenge records an order of this home's could not remove, first
+    if [ -e "$W/records-left" ]; then
+        if "$issuer" clean --zone "$zone" --token-file "$token_file" --suffix "$suffix" --home "$name"; then
+            rm -f "$W/records-left"
+        else
+            say "$name: its challenge records still not removed"
+            failed=1
+        fi
+    fi
     code=$(mailbox GET request.csr "$W/request.csr.part")
     case $code in
         200) mv "$W/request.csr.part" "$W/request.csr" ;;
@@ -99,14 +110,15 @@ print(b.split("/", 1)[0], b.split("/", 1)[1], env["HOME_REGION"])' "$H/launcher.
         failed=1
         continue
     fi
-    if "$issuer" issue --state "$state" "${staging[@]}" --zone "$zone" --token-file "$token_file" --suffix "$suffix" --home "$name" --csr "$W/request.csr" --out "$W/chain.pem"; then
-        rm -f "$W/failed-at"
-        answer
-    else
-        touch "$W/failed-at"
-        say "$name: its order failed"
-        failed=1
-    fi
+    code=0
+    "$issuer" issue --state "$state" "${staging[@]}" --zone "$zone" --token-file "$token_file" --suffix "$suffix" --home "$name" --csr "$W/request.csr" --out "$W/chain.pem" || code=$?
+    case $code in
+        0) rm -f "$W/failed-at"; answer ;;
+        # issued, a challenge record left: answered, and the next round
+        # removes the record before anything else
+        4) rm -f "$W/failed-at"; : > "$W/records-left"; answer ;;
+        *) touch "$W/failed-at"; say "$name: its order failed"; failed=1 ;;
+    esac
 done
 [ "$failed" = 0 ] || exit 1
 [ "$pending" = 0 ] || exit 3

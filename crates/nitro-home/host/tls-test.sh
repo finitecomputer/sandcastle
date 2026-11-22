@@ -18,25 +18,46 @@ box=$work/mailbox
 mkdir -p "$box"
 tls_names="test1.homes.example,*.test1.homes.example"
 say() { echo "    home: $*"; }
+ok() { echo "ok: $*"; }
+fail() { echo "FAILED: $*"; exit 1; }
 # shellcheck source=tls.sh
-. "$here/tls.sh"
-# the bucket's stand-in, a directory; each GET counted
+. "${TLS_SH:-$here/tls.sh}"
+
+# tls.sh's own mailbox, against a curl that gets its 200 and then fails
+# (exit 18, a transfer cut short): no status but 000 comes of it
+mkdir -p "$work/bin" "$work/s/aws"
+printf '#!/bin/sh\ncat > /dev/null\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && echo partial > "$2"; shift; done\nprintf 200\nexit 18\n' > "$work/bin/curl"
+chmod 755 "$work/bin/curl"
+echo id > "$work/s/aws/access-key-id"
+echo secret > "$work/s/aws/secret-access-key"
+code=$(S=$work/s HOME_REGION=x mailbox_url=https://bucket.invalid/p/tls PATH="$work/bin:$PATH" mailbox GET chain.pem "$work/cut.pem")
+[ "$code" = 000 ] || fail "a transfer curl reports failed is 000, not $code"
+ok "a GET whose transfer curl cut short after its 200: 000"
+# the bucket's stand-in, a directory; each GET counted. $work/fail-put
+# makes the next PUT fail before it lands (curl's 000); $work/cut-get makes
+# the next GET stop halfway (curl's failure after its 200: tls.sh's mailbox
+# prints 000 for it)
 mailbox() {
     local m=$1 k=$2 o=$3
     shift 3
     case $m in
-        GET) echo >> "$work/gets"; if [ -f "$box/$k" ]; then cp "$box/$k" "$o"; echo 200; else echo 404; fi ;;
-        PUT) [ "$1" = --data-binary ] && cp "${2#@}" "$box/$k" && echo 200 ;;
+        GET)
+            echo >> "$work/gets"
+            if [ -f "$work/cut-get" ] && [ -f "$box/$k" ]; then rm "$work/cut-get"; head -c 900 "$box/$k" > "$o"; echo 000; return; fi
+            if [ -f "$box/$k" ]; then cp "$box/$k" "$o"; echo 200; else echo 404; fi ;;
+        PUT)
+            if [ -f "$work/fail-put" ]; then rm "$work/fail-put"; echo 000; return; fi
+            [ "$1" = --data-binary ] && cp "${2#@}" "$box/$k" && echo 200 ;;
     esac
 }
 gets() { [ -f "$work/gets" ] && wc -l < "$work/gets" || echo 0; }
-ok() { echo "ok: $*"; }
-fail() { echo "FAILED: $*"; exit 1; }
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout "$work/ca.key" -out "$work/ca.pem" -subj /CN=tls-test -days 2 2> /dev/null
-# <csr> <days from now> <out>: a certificate for the CSR's key and names
+# <csr> <days from now> <out>: a chain (the certificate for the CSR's key
+# and names, then the CA's) as an issuer answers it
 sign() {
     openssl x509 -req -in "$1" -CA "$work/ca.pem" -CAkey "$work/ca.key" -not_before "$(date -u -d '-1 day' +%Y%m%d%H%M%SZ)" \
         -not_after "$(date -u -d "+$2 days" +%Y%m%d%H%M%SZ)" -copy_extensions copy -out "$3" 2> /dev/null
+    cat "$work/ca.pem" >> "$3"
 }
 # <chain>: put in use as tls_take would have
 use() {
@@ -47,14 +68,26 @@ use() {
 }
 taken() { tls_take >&2 && echo 0 || echo $?; }
 
+touch "$work/fail-put"
 tls_ask
-[ -s "$box/request.csr" ] && [ "$(stat -c %a "$TLS/key.pem")" = 600 ] || fail "the request sent and the key the home's alone"
-ok "the first boot: a key of the home's own (0600) and its request in the mailbox"
+[ ! -e "$box/request.csr" ] && [ ! -e "$TLS/request.sent" ] || fail "a failed PUT is not taken as sent"
+tls_tick || true
+[ -s "$box/request.csr" ] && [ -e "$TLS/request.sent" ] && [ "$(stat -c %a "$TLS/key.pem")" = 600 ] || fail "the request sent again, and the key the home's alone"
+ok "the first boot's request lost in transit: sent again at the next tick; the key the home's own (0600)"
 key=$(sha256sum < "$TLS/key.pem")
 [ "$(taken)" = 1 ] && [ -z "$(tls_in_use)" ] || fail "nothing taken from an empty mailbox"
 ok "no answer yet: nothing in use, and the front door waits"
 
 sign "$box/request.csr" 90 "$box/chain.pem"
+touch "$work/cut-get"
+[ "$(taken)" = 1 ] && [ -z "$(tls_in_use)" ] || fail "a download cut short is not taken"
+ok "the answer's download cut short (curl failed after its 200): not taken"
+sed '/-----END CERTIFICATE-----/q' "$box/chain.pem" > "$work/leaf.pem"
+cp "$box/chain.pem" "$work/whole.pem"
+cp "$work/leaf.pem" "$box/chain.pem"
+[ "$(taken)" = 1 ] && [ -z "$(tls_in_use)" ] || fail "a chain without its issuer refused"
+ok "a certificate without its issuer (the chain's intermediate missing): refused"
+cp "$work/whole.pem" "$box/chain.pem"
 [ "$(taken)" = 0 ] && [ "$(tls_in_use)" = "$TLS/chain-$(sha256sum < "$box/chain.pem" | cut -c1-16).pem" ] || fail "the answer taken"
 grep -q "^tls $TLS/chain-[0-9a-f]\{16\}\.pem $TLS/key.pem$" "$TLS/caddy-tls" || fail "caddy-tls names the chain and the key"
 ok "the issuer's answer (90 days) taken: caddy-tls names it"
@@ -107,4 +140,12 @@ use "$work/expired.pem"
 sign "$box/request.csr" 10 "$box/chain.pem"
 [ "$(taken)" = 1 ] && [ "$(tls_in_use)" != "$TLS/chain-$(sha256sum < "$work/expired.pem" | cut -c1-16).pem" ] || fail "a due one replaces an expired one"
 ok "expired in use, and the mailbox's is due: taken (a due one beats none), and still looked for again"
+sign "$box/request.csr" 90 "$box/chain.pem"
+use "$work/due.pem"
+before=$(cat "$TLS/caddy-tls")
+mkdir "$TLS/caddy-tls.part"
+[ "$(taken)" = 1 ] && [ "$(cat "$TLS/caddy-tls")" = "$before" ] || fail "a failed write leaves caddy-tls as it was"
+rmdir "$TLS/caddy-tls.part"
+[ "$(taken)" = 0 ] && [ "$(cat "$TLS/caddy-tls")" != "$before" ] || fail "taken once it can be written"
+ok "caddy-tls not writable (as on a full disk): left as it was, not said to serve; taken at the next tick"
 echo "tls-test: every case passed"

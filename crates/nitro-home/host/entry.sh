@@ -271,11 +271,16 @@ wildcard)
             [ $(( n % 60 )) -ne 0 ] || say "tls: waiting for the issuer's certificate ($(( n * 5 )) s)"
             sleep 5
             n=$(( n + 1 ))
-            tls_take || true
+            tls_tick || true
         done
         caddy_run --watch
     ) &
     pids+=($!)
+    # a first start (a new home, or one moved from acme) has no certificate
+    # until the issuer answers, which the deploy's round does within
+    # seconds of the request (home-deploy.sh): its verdict waits for it, up
+    # to HOME_CERT_WAIT_S (default 240, inside the switch's 300)
+    for _ in $(seq "${HOME_CERT_WAIT_S:-240}"); do [ -s $TLS/caddy-tls ] && break; sleep 1; done
     ;;
 *) die "the release's certificate is acme or wildcard, not $certificate" ;;
 esac
@@ -319,7 +324,7 @@ stat -c %s $LOG/celld.log > /run/fragment-home/stats-at 2>/dev/null || echo 0 > 
   while sleep 60; do
     line=$(stats_line) && [ -n "$line" ] && say "stats $line"
     $said || { acme_account && said=true; } || true
-    [ "$certificate" != wildcard ] || [ ! -s $TLS/caddy-tls ] || tls_take || true
+    [ "$certificate" != wildcard ] || [ ! -s $TLS/caddy-tls ] || tls_tick || true
   done ) &
 stats_pid=$!
 
