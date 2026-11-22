@@ -27,6 +27,7 @@ thiserror.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 sandcastle-nitro-spike = { path = "../nitro-spike" }
+sandcastle-nitro-attest.workspace = true
 sandcastle-wire.workspace = true
 sandcastle-vm.workspace = true
 libc.workspace = true

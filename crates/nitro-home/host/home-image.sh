@@ -35,7 +35,9 @@ BASE_REF=debian:trixie-slim
 [ -f "$release/release-id" ] || { echo "home-image: $release is no home release (cargo xtask home render)" >&2; exit 1; }
 [ -f "$build/build.json" ] || { echo "home-image: $build is no home build (home-build.sh)" >&2; exit 1; }
 
-digest_file="$out.base-digest"
+# shared by every slot of a home (home-stage.sh), so a deploy never pulls
+# another base
+digest_file=${BASE_DIGEST_FILE:-$out.base-digest}
 if [ ! -s "$digest_file" ]; then
     docker pull -q --platform linux/arm64 "$BASE_REF" > /dev/null
     docker image inspect "$BASE_REF" --format '{{index .RepoDigests 0}}' > "$digest_file"

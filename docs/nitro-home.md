@@ -122,13 +122,40 @@ the image is secret in the clear.
 
 A new image has a new PCR0, and the key releases nothing to it until the
 policy names that PCR0. `host/pin-pcr0.sh` does that on the operator's
-machine:
+machine: it verifies the image's own attestation document down to AWS's
+pinned root (`nitro-verify`), and puts the document's PCR0 into the
+policy, beside the running image's (`--keep`), for a rollback.
 
-1. it boots the image once;
-2. it verifies the home's own attestation document down to AWS's pinned
-   root (`nitro-verify`);
-3. it puts the document's PCR0 into the policy, keeping the one before
-   beside it, for a rollback.
+## Deploys
+
+One command on the operator's machine, `host/home-deploy.sh`, takes a
+running home to a new image: a new release (`cargo xtask home render`'s),
+new programs, or a computer image's pin (`--pin <pcr0>`). It:
+
+1. seals the bundle again only when what it seals changed;
+2. ships the trees, the release, the bundle, the conf and the pins, and
+   has the parent build what changed (`home-build.sh`);
+3. stages the image in a slot of its own beside the running home
+   (`home-stage.sh`: `/var/lib/nitro-home/slots/<time>`; the unit runs
+   whichever slot `current` names);
+4. measures it beside the running home (`nitro-home measure`: its own CID,
+   no NIC, 1 vCPU, 1 GiB, throwaway disks; it prints its attestation and
+   dies at KMS), verifies the document on the operator's machine, records
+   the slot's PCR0 there (`attest/slots.tsv`), and pins it, keeping the
+   running slot's from that record;
+5. switches the home onto it (`home-switch.sh`): a graceful restart (its
+   computers kept), healthy when this start serves with its door holding
+   as many accounts as the start before; otherwise back onto the slot it
+   ran, by itself.
+
+`home-deploy.sh --rollback` moves the home back onto the slot before (its
+PCR0 is the policy's second).
+
+Measured on the owner's home (2026-11-22): a deploy 121 to 127 s end to
+end; the pause, from the restart to serving, 10.2 to 11.8 s; a rollback
+10.9 to 11.3 s; the door's accounts and the operator's counts (people,
+fragments) unchanged across each. The measuring boot reads PCR0 in 0.9 s,
+the same PCR0 as the image's own boot.
 
 ## Network
 
@@ -305,6 +332,13 @@ Outside the parent:
   invite before its person does.
 
 ## Not verified
+
+- A deploy of a new computer image with its pin measured by the engine
+  (lane A's S3 `POST /v1/images/<key>/measure`): `--pin` takes a PCR0
+  by hand until then.
+- The home's image is not built reproducibly: each staging measures to a
+  new PCR0 (its files' times), so a PCR0 cannot be predicted before the
+  build, nor published ahead of it.
 
 - The computer's idle sleep (the seat's) was not waited for: the wakes
   above follow a computer restart, a home restart and a reap.
