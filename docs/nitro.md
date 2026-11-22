@@ -170,6 +170,71 @@ krun node.
   less each sandbox's overheads (2 MiB and 16 MiB a device in confidential
   mode; the spike's line 10).
 
+## Restarts
+
+An engine restart or upgrade leaves its computers running, and the next
+engine adopts them (their records, run directories and cgroups), when
+the VMs' cgroup is a unit of its own:
+
+- **`sandcastle-vms.service`** holds the VMs' cgroup. Its one process,
+  `sandcastle-engine hold`, sits in a `keeper/` leaf, so the cgroup can
+  hand its controllers to the VMs' `vm-<slot>` cgroups. A VM and its
+  jailer both live in their `vm-<slot>`: the jailer joins it right after
+  forking the VM, off the VM's boot.
+- **`sandcastle-engine.service`** holds the engine alone, so its stop
+  (systemd's default, which signals every process of the unit) reaches no
+  VM and no jailer, and its restart starts in an empty cgroup.
+- The engine's config names the cgroup: `"vm_cgroup":
+  "/sys/fs/cgroup/sandcastle.slice/sandcastle-vms.service"`.
+
+Why two units: on systemd 252 (Amazon Linux 2023) a delegated unit's
+restarted process is put in the unit's root cgroup, and cgroup v2 refuses
+a process in a cgroup that hands controllers to its children. With the
+VMs under the engine's own unit, a restart with a VM running failed with
+`219/CGROUP` and looped; with the unit's default stop, every computer
+ended. (`DelegateSubgroup=`, systemd 254, would be the one-unit fix.)
+
+```ini
+# /etc/systemd/system/sandcastle-vms.service
+[Unit]
+Description=sandcastle VMs (their cgroup, apart from the engine's)
+
+[Service]
+ExecStart=/opt/sandcastle/bin/sandcastle-engine hold
+Slice=sandcastle.slice
+Delegate=yes
+# Its stop ends the keeper alone, never a VM. It is never restarted while
+# VMs run: a keeper started again cannot enter a cgroup that hands
+# controllers to its VMs.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```ini
+# /etc/systemd/system/sandcastle-engine.service
+[Unit]
+Description=sandcastle engine (computers as Nitro Sandboxes)
+Wants=sandcastle-vms.service network-online.target
+After=sandcastle-vms.service network-online.target
+
+[Service]
+ExecStart=/opt/sandcastle/bin/sandcastle-engine serve --config /etc/sandcastle/engine.json
+Slice=sandcastle.slice
+LimitNOFILE=524288
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Moving a node onto the two units takes one stop of the old engine with no
+computer running (its VMs live in the old unit's cgroup until then).
+`sandcastle-engine reset --cgroup` ends each `vm-<slot>` (and an old
+engine's `engine/` leaf), never the keeper.
+
 ## The bridge
 
 A home (celld and the cell) may run in a confidential sandbox of its own

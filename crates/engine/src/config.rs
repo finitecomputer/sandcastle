@@ -48,6 +48,16 @@ pub struct EngineConfig {
     /// place of a libkrun VM (docs/nitro.md). Absent, the node is krun's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nitro: Option<NitroConfig>,
+    /// The cgroup the VMs live in, delegated to a unit of its own whose one
+    /// process (`sandcastle-engine hold`) sits in a leaf: the VMs and their
+    /// jailers are then not the engine's unit's, so an engine restart or
+    /// upgrade leaves them running, and the next engine adopts them
+    /// (docs/nitro.md, "Restarts"). Absent, the VMs live in the engine's
+    /// own delegated subtree, which systemd 252 cannot hand back to a
+    /// restarted engine while a VM runs (no `DelegateSubgroup=`), so its
+    /// unit's stop ends them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_cgroup: Option<PathBuf>,
 }
 
 /// A Nitro node's own settings: its two files in `lib_dir`, and how its
@@ -153,6 +163,11 @@ impl EngineConfig {
         if self.memory_mib_max == 0 {
             return Err(ConfigError("memory_mib_max: above 0".into()));
         }
+        if let Some(cg) = &self.vm_cgroup {
+            if !absolute(cg) || !cg.starts_with("/sys/fs/cgroup/") || cg == Path::new("/sys/fs/cgroup/") {
+                return Err(ConfigError("vm_cgroup: an absolute, normal path below /sys/fs/cgroup".into()));
+            }
+        }
         if let Some(n) = &self.nitro {
             for (name, f) in [("nitro.firecracker", &n.firecracker), ("nitro.kernel", &n.kernel), ("nitro.mke2fs", &n.mke2fs), ("nitro.nft", &n.nft)] {
                 if f.is_empty() || f.contains('/') || f == "." || f == ".." {
@@ -245,6 +260,7 @@ pub(crate) mod tests {
             seccomp: sandcastle_vm::jail::SeccompMode::Enforce,
             system_libs: debian_libs(),
             nitro: None,
+            vm_cgroup: None,
         }
     }
 
@@ -274,6 +290,14 @@ pub(crate) mod tests {
         assert!(bad(&|c| c.client_uid = 0));
         assert!(bad(&|c| c.state_dir = format!("/{}", "a".repeat(100)).into()));
         assert_eq!(config().run_dir(3), PathBuf::from("/var/lib/sandcastle-engine/vms/3"));
+        // The VMs' own cgroup: below the cgroup root, and absent by default.
+        assert!(bad(&|c| c.vm_cgroup = Some("sandcastle.slice/sandcastle-vms.service".into())));
+        assert!(bad(&|c| c.vm_cgroup = Some("/tmp/vms".into())));
+        assert!(bad(&|c| c.vm_cgroup = Some("/sys/fs/cgroup/".into())));
+        let mut held = config();
+        held.vm_cgroup = Some("/sys/fs/cgroup/sandcastle.slice/sandcastle-vms.service".into());
+        held.validate().unwrap();
+        assert_eq!(krun.vm_cgroup, None);
     }
 
     // Goal: a config that names no system libraries gets Debian's for
