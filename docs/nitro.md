@@ -216,8 +216,8 @@ WantedBy=multi-user.target
 # /etc/systemd/system/sandcastle-engine.service
 [Unit]
 Description=sandcastle engine (computers as Nitro Sandboxes)
-Wants=sandcastle-vms.service network-online.target
-After=sandcastle-vms.service network-online.target
+Wants=sandcastle-vms.service nitro-slots.service network-online.target
+After=sandcastle-vms.service nitro-slots.service network-online.target
 
 [Service]
 ExecStart=/opt/sandcastle/bin/sandcastle-engine serve --config /etc/sandcastle/engine.json
@@ -229,6 +229,10 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 ```
+
+`nitro-slots.service` (made by `nitro/parent-ready.sh`) raises the
+sandboxes' slot budget at every boot: the driver starts at 4, which is the
+home, one measuring boot and two computers.
 
 Moving a node onto the two units takes one stop of the old engine with no
 computer running (its VMs live in the old unit's cgroup until then).
