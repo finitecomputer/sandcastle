@@ -117,7 +117,9 @@ print(b.split("/", 1)[0], b.split("/", 1)[1], env["HOME_REGION"])' "$H/launcher.
         # issued, a challenge record left: answered, and the next round
         # removes the record before anything else
         4) rm -f "$W/failed-at"; : > "$W/records-left"; answer ;;
-        *) touch "$W/failed-at"; say "$name: its order failed"; failed=1 ;;
+        # a failed order may have left its records too (their removal can
+        # fail as the order did): the next round clears them first
+        *) touch "$W/failed-at"; : > "$W/records-left"; say "$name: its order failed"; failed=1 ;;
     esac
 done
 [ "$failed" = 0 ] || exit 1

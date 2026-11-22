@@ -278,9 +278,10 @@ wildcard)
     pids+=($!)
     # a first start (a new home, or one moved from acme) has no certificate
     # until the issuer answers, which the deploy's round does within
-    # seconds of the request (home-deploy.sh): its verdict waits for it, up
-    # to HOME_CERT_WAIT_S (default 240, inside the switch's 300)
-    for _ in $(seq "${HOME_CERT_WAIT_S:-240}"); do [ -s $TLS/caddy-tls ] && break; sleep 1; done
+    # seconds of the request (home-deploy.sh): its verdict waits for it
+    # until HOME_CERT_WAIT_S (default 240) from this boot's clock, so it
+    # comes within the switch's 300 s however long the boot took before
+    until [ -s $TLS/caddy-tls ] || [ "$(ms_since "$t0")" -ge $(( ${HOME_CERT_WAIT_S:-240} * 1000 )) ]; do sleep 1; done
     ;;
 *) die "the release's certificate is acme or wildcard, not $certificate" ;;
 esac

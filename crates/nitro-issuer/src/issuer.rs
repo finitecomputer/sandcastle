@@ -50,13 +50,12 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
                 let dns = Dns::open(&need(args, "--zone")?, Path::new(&need(args, "--token-file")?)).await?;
                 let account = account(Path::new(&need(args, "--state")?), staging).await?;
                 let (chain, left) = issue(&account, &dns, &names, &csr).await;
-                write_atomic(Path::new(&need(args, "--out")?), chain?.as_bytes(), 0o644)?;
-                eprintln!("nitro-issuer: {} and {}: issued", names[0], names[1]);
                 if left > 0 {
                     eprintln!("nitro-issuer: {left} challenge record(s) at {} left: `clean` removes them", challenge_name(&names[0]));
-                    return Ok(ExitCode::from(CHALLENGE_LEFT));
                 }
-                Ok(ExitCode::SUCCESS)
+                write_atomic(Path::new(&need(args, "--out")?), chain?.as_bytes(), 0o644)?;
+                eprintln!("nitro-issuer: {} and {}: issued", names[0], names[1]);
+                Ok(ExitCode::from(if left > 0 { CHALLENGE_LEFT } else { 0 }))
             }
             Some("clean") => {
                 let names = names(&need(args, "--home")?, &need(args, "--suffix")?)?;

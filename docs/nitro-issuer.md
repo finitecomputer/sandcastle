@@ -52,9 +52,11 @@ no other CA, may issue for anything under the suffix.
 names at the parent (no CAA of its own), records the parent's directory
 (`<home dir>/parent-dir`) and deploys it. `home-deploy.sh` runs the
 issuer's round for a wildcard home every 5 s beside the switch, and the
-home's first start holds its verdict until it has its certificate (up to
-`HOME_CERT_WAIT_S`, 240 s, inside the switch's 300), so the switch sees it
-serve rather than roll back. For a home made before: add `"certificate":
+home's first start holds its verdict until it has its certificate (until
+`HOME_CERT_WAIT_S`, 240 s, from its boot's clock, so inside the switch's
+300), so the switch sees it serve rather than roll back; an issuer that
+does not answer in time rolls the move back, onto the home's own
+certificates. For a home made before: add `"certificate":
 "wildcard"` to its `home.json`, write its `parent-dir`, render, and deploy
 (`home-deploy.sh --home <name>`). A home whose conf says nothing is `acme`,
 as before, byte for byte.
