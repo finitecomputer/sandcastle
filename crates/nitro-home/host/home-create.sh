@@ -40,15 +40,16 @@
 #     no port forwarded, the PROXY protocol from the parent's address) and
 #     its release (`cargo xtask home render`);
 #  5. its DNS (home-dns.py): its name and its fragments' pointing at the
-#     parent, and a CAA record that lets no CA issue for them yet;
+#     parent (their CAA is the suffix's, which names the issuer's account
+#     alone: docs/nitro-issuer.md);
 #  6. then its first deploy (home-deploy.sh --home): sealed, built, staged,
 #     measured, pinned, started and routed;
-#  7. its certificate: the home prints the ACME account its front door
-#     registered at its first start ("home: acme account <uri>"), the CAA
-#     record is changed to name that account alone (and no wildcard), and
-#     after the record's TTL the home restarts and gets its certificate. No
-#     other account, and so not the parent, could be issued one for its
-#     names at any moment in between.
+#  7. its certificate, one for its name and its fragments' wildcard
+#     (docs/nitro-issuer.md): the home asks at its first start, for a key
+#     it makes and keeps; the issuer's round, which home-deploy.sh runs
+#     beside the switch (nitro-issuer's issuer-sweep.sh, built here:
+#     NITRO_ISSUER, default the tree's target/release/nitro-issuer),
+#     answers, and the home serves it within seconds.
 #
 # Secrets go only into the home's directory (owner-only) and its sealed
 # bundle; nothing secret is printed or passed on a command line. Every AWS
@@ -163,7 +164,7 @@ python3 -I - "$P" "$host" "$(alloc host_addr)" > "$H/home.json" <<'PY'
 import json, sys
 p, host, parent = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
 print(json.dumps({"platform_host": host, "fragment_suffix": host, "models_file": p["models_file"], "default_plan": p["default_plan"],
-                  "operators": p["operators"], "inviter": p["inviter"], "proxy_from": parent}, indent=1))
+                  "operators": p["operators"], "inviter": p["inviter"], "proxy_from": parent, "certificate": "wildcard"}, indent=1))
 PY
 python3 -I - "$P" "$H/alloc.json" "$(cat "$H/kms/key-id")" "$host" "$fleet" "$name" > "$H/launcher.json" <<'PY'
 import json, sys
@@ -189,42 +190,16 @@ if [ "$(sha256sum < "$H/home.json")" != "$(cat "$H/out/home.json.sha256" 2>/dev/
     say "its release rendered"
 fi
 
-# 5. its DNS: no CA may issue for its names until its own account is
-# named, written before its names point at the parent
-if [ -s "$H/acme-account" ]; then "$here/home-dns.py" "$P" caa "$host" "$(cat "$H/acme-account")" >&2; else "$here/home-dns.py" "$P" caa "$host" none >&2; fi
+# 5. its DNS
 "$here/home-dns.py" "$P" point "$host" >&2
 
-# 6. its first deploy
+# 6. its first deploy (a wildcard home's certificate is answered during it)
+echo "$pdir" > "$H/parent-dir"
 door=$(python3 -I -c 'import json,sys; print(*json.load(open(sys.argv[1]))["door"])' "$P")
 NITRO_HOME_DIR=$H "$here/home-deploy.sh" --home "$name" --door $door
 
-# 7. its certificate, for its own account alone
-read -r pconf phost < "$H/parent"
-on_parent() { ssh -F "$pconf" "$phost" "$@"; }
-unit=nitro-home@$name
-account=$(on_parent "sudo journalctl -u $unit -o cat --no-pager | sed -n 's/.*home: acme account \(https:[^ ]*\).*/\1/p' | tail -n 1")
-[ -n "$account" ] || { say "the home printed no ACME account"; exit 1; }
-if [ "$(cat "$H/acme-account" 2>/dev/null)" != "$account" ]; then
-    echo "$account" > "$H/acme-account"
-    "$here/home-dns.py" "$P" caa "$host" "$account" >&2
-    say "its CAA names its own account; waiting out the record's TTL"
-    sleep 70
-fi
-if ! curl -s -o /dev/null -m 10 "https://$host/"; then
-    # a restart orders the certificate now (Caddy's own retry may wait minutes)
-    pid0=$(on_parent "systemctl show -p MainPID --value $unit")
-    on_parent "sudo systemctl restart $unit"
-    verdict=
-    for _ in $(seq 300); do
-        pid=$(on_parent "systemctl show -p MainPID --value $unit")
-        if [ "$pid" != "$pid0" ] && [ "$pid" != 0 ]; then
-            verdict=$(on_parent "sudo journalctl _PID=$pid -o cat --no-pager | grep -oE 'home: serving in [0-9]+ ms|no valid certificate|home: failed.*' | head -n 1" || true)
-            [ -n "$verdict" ] && break
-        fi
-        sleep 1
-    done
-    case "$verdict" in *"serving in"*) say "certificate valid: ${verdict#home: }" ;; *) say "no certificate: ${verdict:-no verdict}"; exit 1 ;; esac
-fi
+# 7. its certificate, answered by the issuer's round during the deploy
+for _ in $(seq 60); do curl -s -o /dev/null -m 10 "https://$host/" && break; sleep 1; done
 curl -s -o /dev/null -m 10 "https://$host/" || { say "https://$host/ does not answer with a valid certificate"; exit 1; }
 python3 -I -c 'import json,sys; h=sys.argv[1]; print(json.dumps({"home": f"https://{h}", "door": f"https://{h}/__door"}))' "$host" > "$H/created"
 cat "$H/created"

@@ -20,6 +20,7 @@ COPY bin/ /usr/local/bin/
 COPY git/ /opt/macrofiche/git-2.55.0/
 COPY release/ /opt/fragment-home/release/
 COPY entry.sh /opt/fragment-home/entry.sh
+COPY tls.sh /opt/fragment-home/tls.sh
 # no door (lane A's guest, `sandcastle.start=image`): the home's own start,
 # its sealed secrets and its computers' pins, all in the measured root
 COPY start.json /etc/sandcastle/start.json

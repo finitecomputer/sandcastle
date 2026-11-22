@@ -209,17 +209,19 @@ run that stopped is run again to finish):
 4. **its confs and release:** `cargo xtask home render` with
    `proxy_from` (below), and a launcher conf with no port forwarded;
 5. **its DNS** (`home-dns.py`, a token that edits the zone's DNS alone):
-   first a CAA record that lets no CA issue for its names, then its name
-   and `*.<its name>` pointing at the parent (a name with any record of
-   its own is no longer answered by the zone's wildcard);
+   its name and `*.<its name>` pointing at the parent (a name with any
+   record of its own is no longer answered by the zone's wildcard); their
+   CAA is the suffix's, which names the issuer's account alone
+   (docs/nitro-issuer.md);
 6. **its first deploy:** `home-deploy.sh --home <name>`, as any deploy:
    sealed, built, staged, measured, pinned, switched onto;
-7. **its certificate:** the home prints the ACME account its front door
-   registered at its first start (`home: acme account <uri>`, refused by
-   the CAA then); the CAA record is changed to name that account alone and
-   no wildcard, and after its TTL the home restarts and gets its
-   certificate. No other account, the parent's included, could have been
-   issued one for its names in between.
+7. **its certificate:** one for its name and its fragments' wildcard, for
+   a key the home made at its first start and keeps: the issuer's round
+   (`issuer-sweep.sh`) answers the request the home left in its prefix,
+   and the home serves it within seconds (docs/nitro-issuer.md). Until
+   2026-11-22 each home had a CAA record naming its own Caddy's account
+   and a certificate per name; Let's Encrypt's 50 new certificates a week
+   for the domain could not cover that.
 
 On the parent, a named home's slots, disks and conf are under
 `/var/lib/nitro-home/homes/<name>`, its sockets under `/run/nitro-home/<name>`,
@@ -301,8 +303,9 @@ What sets those numbers:
 - **Certificates.** Let's Encrypt issues at most 50 new certificates a
   week for one registered domain, and each fragment's name gets its own:
   a home of a thousand fragments under one domain cannot give each one a
-  certificate. A wildcard per home (DNS-01 through a delegated
-  `_acme-challenge`), the Public Suffix List or a raised limit can.
+  certificate. Since 2026-11-22 each test home has one wildcard, which the
+  operator's issuer gets by DNS-01 (docs/nitro-issuer.md); 50 new homes a
+  week is the limit that remains.
 
 So, within the budgets (an m8g.2xlarge is about $0.36 an hour, some $11.6
 a GiB-month of its sandbox pool): an org's home of 2 vCPUs and 4 GiB is
@@ -343,6 +346,11 @@ traffic is KMS, S3, the model API and Let's Encrypt, all over TLS the home
 ends, plus DNS.
 
 ### Certificates and CAA
+
+This section is the owner's home's (`"certificate": "acme"`, and every home
+whose conf says nothing). The homes under the homes' suffix are
+`wildcard`: one certificate each, from the operator's issuer
+(docs/nitro-issuer.md).
 
 Caddy in the home holds one ACME account, at Let's Encrypt's production
 directory. Its key and the certificates live in Caddy's storage on the
@@ -468,7 +476,7 @@ Each item is with the design PR that closes it
 | 2 | **Whoever ships a new home image can ship one that skips the passkey check**, or anything else: the project's administrators can name any PCR0 in the key's policy (`kms:Put*`), and AWS can too | PR 10, a release rule we cannot change alone |
 | 3 | **It can roll back or swap the home's data disk** (an older copy, or another home's under the same key). It cannot read it: AES-XTS under a key from KMS. The encryption is not authenticated, so it can also corrupt blocks | PR 9 (rollback), with dm-integrity |
 | 4 | **The fleet bucket is unsealed.** The parent's role has no access, and the home's traffic to S3 is TLS the home ends. But whoever holds AWS administration, or the home's IAM key, reads every object, and can roll the bucket back | The sealed fleet bucket (phase 2) |
-| 5 | ~~It could get a certificate for the home's names~~ (TLS-ALPN-01 validates whoever answers on the address the DNS names, and the parent holds that address) | **Closed** 2026-11-21: CAA records name the home's own ACME account (`accounturi`, RFC 8657), whose key never leaves the home, and forbid wildcards. Another account was refused ("Certificates and CAA") |
+| 5 | ~~It could get a certificate for the home's names~~ (TLS-ALPN-01 validates whoever answers on the address the DNS names, and the parent holds that address) | **Closed** 2026-11-21: CAA records name the home's own ACME account (`accounturi`, RFC 8657), whose key never leaves the home, and forbid wildcards. Another account was refused ("Certificates and CAA"). A `wildcard` home (docs/nitro-issuer.md): the suffix's CAA names the operator's issuer alone, so the parent still cannot; the issuer can, as the zone's holder always could |
 | 6 | It sees traffic metadata: clients' addresses, the names they ask for (SNI, so the fragments' names), sizes and timing, and the names the home resolves | Inherent to the parent carrying the bytes; DNS over TLS would hide the last |
 | 7 | It sees the home's log lines: the boot's steps, celld's warnings, the attestation document. The door's, macrofiche's and celld's full logs stay on the encrypted disk | Keep the parent's view to the boot's steps |
 | 8 | ~~It sees an invite link made over its own exec~~ | **Closed** with item 1: no exec. Invites come through the door alone (a hosted platform's signed ask, over TLS the home ends), and their links go from the home to that platform to the person's browser |

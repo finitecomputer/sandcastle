@@ -51,7 +51,7 @@ trap 'rm -rf "$ctx" "$root" "$empty"' EXIT
 cp -a "$build/bin" "$ctx/bin"
 cp -a "$build/git" "$ctx/git"
 cp -a "$release" "$ctx/release"
-cp "$here/entry.sh" "$here/Dockerfile" "$ctx/"
+cp "$here/entry.sh" "$here/tls.sh" "$here/Dockerfile" "$ctx/"
 cp "$sealed" "$ctx/sealed.json"
 cp "$pins" "$ctx/pins"
 python3 -I - "$conf" > "$ctx/start.json" <<'PY'

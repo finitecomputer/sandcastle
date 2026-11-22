@@ -19,7 +19,9 @@
 #   7. celld: the release deployed to the fleet bucket when it changed,
 #      then the node, on loopback.
 #   8. Caddy, the front door on 443 (which the parent forwards untouched):
-#      TLS ended here, with certificates it gets itself by TLS-ALPN-01.
+#      TLS ended here, with certificates it gets itself by TLS-ALPN-01, or,
+#      for a wildcard home, the one the operator's issuer answers for this
+#      home's own key (tls.sh, docs/nitro-issuer.md).
 #
 # Settings, none secret, from the launcher's conf: HOME_BUCKET (s3://…),
 # HOME_REGION, HOME_PLATFORM (the platform's host), HOME_SUFFIX (the
@@ -225,21 +227,64 @@ until curl -sf -m 5 http://127.0.0.1:8080/.well-known/celld/health > /dev/null; 
 done
 say "celld serving in $(ms_since "$t0") ms from the clock"
 
-# 8. the front door, last: what it lets in is ready behind it
-XDG_DATA_HOME=$STATE/caddy XDG_CONFIG_HOME=$STATE/caddy /usr/local/bin/caddy run --config $R/Caddyfile --adapter caddyfile > $LOG/caddy.out 2>&1 &
-pids+=($!)
-# its ACME account's URI (public: the CAA record names it), once Caddy has
-# registered it, which it does at its first order: the operator names it
-# in the home's CAA record (docs/nitro-home.md, "Certificates and CAA");
-# its key never leaves this disk
-account=$STATE/caddy/acme/acme-v02.api.letsencrypt.org-directory/users/default/default.json
-for _ in $(seq 300); do [ -s "$account" ] && break; sleep 0.1; done
-acme_account() {
-    local uri
-    uri=$(jq -r '.location // empty' "$account" 2>/dev/null || true)
-    [[ "$uri" =~ ^https://acme-v02\.api\.letsencrypt\.org/acme/acct/[0-9]+$ ]] && say "acme account $uri"
-}
-acme_account || say "acme account: none yet (said once it is)"
+# 8. the front door, last: what it lets in is ready behind it. Its
+# certificates, as the release says (`certificate`, docs/nitro-issuer.md):
+# Caddy's own, each name's by TLS-ALPN-01 (`acme`, and a release without
+# the file), or one for the home's name and its fragments' wildcard, which
+# the operator's issuer gets for a key made here (`wildcard`).
+certificate=$(cat $R/certificate 2>/dev/null || echo acme)
+caddy_run() { XDG_DATA_HOME=$STATE/caddy XDG_CONFIG_HOME=$STATE/caddy exec /usr/local/bin/caddy run --config $R/Caddyfile --adapter caddyfile "$@" > $LOG/caddy.out 2>&1; }
+case "$certificate" in
+acme)
+    caddy_run &
+    pids+=($!)
+    # its ACME account's URI (public: the CAA record names it), once Caddy
+    # has registered it, which it does at its first order: the operator
+    # names it in the home's CAA record (docs/nitro-home.md, "Certificates
+    # and CAA"); its key never leaves this disk
+    account=$STATE/caddy/acme/acme-v02.api.letsencrypt.org-directory/users/default/default.json
+    for _ in $(seq 300); do [ -s "$account" ] && break; sleep 0.1; done
+    acme_account() {
+        local uri
+        uri=$(jq -r '.location // empty' "$account" 2>/dev/null || true)
+        [[ "$uri" =~ ^https://acme-v02\.api\.letsencrypt\.org/acme/acct/[0-9]+$ ]] && say "acme account $uri"
+    }
+    acme_account || say "acme account: none yet (said once it is)"
+    ;;
+wildcard)
+    # one certificate for the home's name and its fragments' wildcard, for
+    # a key of its own, from the operator's issuer (tls.sh says how)
+    TLS=$STATE/tls
+    tls_names="$HOME_PLATFORM,*.$HOME_SUFFIX"
+    [ "$HOME_PLATFORM" = "$HOME_SUFFIX" ] || die "a wildcard home's platform host is its fragments' suffix"
+    b=${HOME_BUCKET#s3://}
+    [[ "$b" == */* ]] || die "HOME_BUCKET names no prefix of the home's own"
+    mailbox_url="https://${b%%/*}.s3.$HOME_REGION.amazonaws.com/${b#*/}/tls"
+    . /opt/fragment-home/tls.sh
+    tls_ask || die "the certificate's request"
+    tls_take || true
+    # Caddy once there is a certificate to serve; until then it waits for
+    # the issuer's, every service behind it already up
+    (
+        n=0
+        until [ -s $TLS/caddy-tls ]; do
+            [ $(( n % 60 )) -ne 0 ] || say "tls: waiting for the issuer's certificate ($(( n * 5 )) s)"
+            sleep 5
+            n=$(( n + 1 ))
+            tls_tick || true
+        done
+        caddy_run --watch
+    ) &
+    pids+=($!)
+    # a first start (a new home, or one moved from acme) has no certificate
+    # until the issuer answers, which the deploy's round does within
+    # seconds of the request (home-deploy.sh): its verdict waits for it
+    # until HOME_CERT_WAIT_S (default 240) from this boot's clock, so it
+    # comes within the switch's 300 s however long the boot took before
+    until [ -s $TLS/caddy-tls ] || [ "$(ms_since "$t0")" -ge $(( ${HOME_CERT_WAIT_S:-240} * 1000 )) ]; do sleep 1; done
+    ;;
+*) die "the release's certificate is acme or wildcard, not $certificate" ;;
+esac
 for _ in $(seq 600); do curl -s -o /dev/null --resolve "$HOME_PLATFORM:443:127.0.0.1" "https://$HOME_PLATFORM/" && break; sleep 0.1; done
 if curl -sf -o /dev/null --resolve "$HOME_PLATFORM:443:127.0.0.1" "https://$HOME_PLATFORM/"; then
     say "serving in $(ms_since "$t0") ms from the clock (TLS here, its certificate valid)"
@@ -274,10 +319,13 @@ stats_line() {
         '{cells: $cells, deployment: {version: $version, generation: $generation}, isolates: $isolates, mem_mib: {total: $mem_total, available: $mem_avail}, load1: $load, data_mib: {used: $disk_used, free: $disk_free}, celld_rss_mib: $celld_rss, events: $events}' 2>/dev/null
 }
 stat -c %s $LOG/celld.log > /run/fragment-home/stats-at 2>/dev/null || echo 0 > /run/fragment-home/stats-at
-( said=false; if [ -s "$account" ]; then said=true; fi
+# and, for a wildcard home, its certificate: while the one in use is due
+# for renewal (or no longer serves), the issuer's next answer is looked for
+( said=false; if [ "$certificate" != acme ] || [ -s "$account" ]; then said=true; fi
   while sleep 60; do
     line=$(stats_line) && [ -n "$line" ] && say "stats $line"
     $said || { acme_account && said=true; } || true
+    [ "$certificate" != wildcard ] || [ ! -s $TLS/caddy-tls ] || tls_tick || true
   done ) &
 stats_pid=$!
 
