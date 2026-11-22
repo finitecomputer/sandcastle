@@ -115,6 +115,7 @@ stop_all() {
         fi
         wait "$celld_pid" 2>/dev/null || true
     fi
+    [ -n "${stats_pid:-}" ] && kill "$stats_pid" 2>/dev/null || true
     for p in "${pids[@]}"; do kill -TERM "$p" 2>/dev/null || true; done
     for p in "${pids[@]}"; do wait "$p" 2>/dev/null || true; done
     [ -n "${bao_pid:-}" ] && kill -TERM "$bao_pid" 2>/dev/null || true
@@ -217,6 +218,33 @@ if curl -sf -o /dev/null --resolve "$HOME_PLATFORM:443:127.0.0.1" "https://$HOME
 else
     say "the front door has no valid certificate yet (see its log); serving behind it"
 fi
+
+# 9. its numbers, a line a minute on the console (docs/nitro-home.md,
+# "Logs and numbers"): counts and sizes alone, never a name, a path or a
+# message, so the parent learns the home's health and nothing of anyone's.
+# Its errors are counted by their event's name, from celld's log since the
+# line before.
+stats_line() {
+    local cells version gen isolates mem_total mem_avail load disk_used disk_free rss events
+    read -r cells version gen isolates < <(curl -s -m 5 http://127.0.0.1:8081/state | jq -r '[(.deployment.cells // {} | length), (.deployment.version // "-"), (.deployment.generation // "-"), (.deployment.isolates // {} | tostring)] | @tsv' 2>/dev/null || echo "- - - -")
+    mem_total=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)
+    mem_avail=$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
+    load=$(cut -d' ' -f1 /proc/loadavg)
+    read -r disk_used disk_free < <(df -m --output=used,avail $STATE | tail -n 1)
+    rss=$(awk '/^VmRSS:/ {print int($2/1024)}' /proc/$celld_pid/status 2>/dev/null || echo 0)
+    # each WARN and ERROR line since the last minute, counted by its event's name
+    events=$(tail -c +$((stats_at + 1)) $LOG/celld.log 2>/dev/null | grep -E ' (WARN|ERROR) |"level":"(warn|error)"|cell_console: ERROR' \
+        | grep -oE 'event="[a-z0-9_.-]+"|"event":"[a-z0-9_.-]+"' | tr -d '"' | sed 's/^event[=:]//' | sort | uniq -c \
+        | awk 'BEGIN { printf "{" } { printf "%s\"%s\":%d", (NR > 1 ? "," : ""), $2, $1 } END { printf "}" }')
+    stats_at=$(stat -c %s $LOG/celld.log 2>/dev/null || echo 0)
+    jq -cn --argjson cells "${cells:-0}" --arg version "$version" --arg generation "$gen" --argjson isolates "${isolates:-null}" \
+        --argjson mem_total "$mem_total" --argjson mem_avail "$mem_avail" --argjson load "$load" \
+        --argjson disk_used "$disk_used" --argjson disk_free "$disk_free" --argjson celld_rss "$rss" --argjson events "${events:-{\}}" \
+        '{cells: $cells, deployment: {version: $version, generation: $generation}, isolates: $isolates, mem_mib: {total: $mem_total, available: $mem_avail}, load1: $load, data_mib: {used: $disk_used, free: $disk_free}, celld_rss_mib: $celld_rss, events: $events}' 2>/dev/null
+}
+stats_at=$(stat -c %s $LOG/celld.log 2>/dev/null || echo 0)
+( while sleep 60; do line=$(stats_line) && [ -n "$line" ] && say "stats $line"; done ) &
+stats_pid=$!
 
 # a service that exits takes the home down
 set +e

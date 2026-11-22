@@ -9,10 +9,11 @@
 #   e2fsprogs    the data disk's filesystem, made on the first boot
 #   socat        a debugging relay over vsock
 #   curl         the entrypoint's health checks
+#   jq           its stats line a minute (counts alone)
 ARG BASE
 FROM ${BASE}
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates dmsetup e2fsprogs socat curl procps iproute2 zlib1g libexpat1 libpcre2-8-0 && \
+    apt-get install -y --no-install-recommends ca-certificates dmsetup e2fsprogs socat curl procps iproute2 zlib1g libexpat1 libpcre2-8-0 jq && \
     rm -rf /var/lib/apt/lists/* /etc/nginx/sites-enabled/* && \
     mkdir -p /var/lib/fragment-home /run/fragment-home
 COPY bin/ /usr/local/bin/
