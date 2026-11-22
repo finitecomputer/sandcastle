@@ -38,3 +38,22 @@ unit and the engine active (0 restarts), `/dev/nitro_enclaves` still the
 `nitro` group's, the pool on the kernel's line; the engine "recovered
 {adopted: [], cleared: [lane-a-s2]}" (it ended with the host), and a new
 computer's start answered in 1,144 ms and ran.
+
+## On the shared parent, beside the real home
+
+The same switch on the parent that runs lane B's home (no computer
+running): one engine stop, the VMs' unit, the engine's unit without
+`Delegate`, `vm_cgroup`. The engine came back with "recovered {adopted: [],
+cleared: []}", the keeper in `sandcastle-vms.service/keeper`, the engine
+alone in its unit, the VMs' cgroup handing out `cpu memory pids`; the home
+stayed active. Then a test computer of lane A's (the Hermes image, claimed
+by a temporary home half of lane A's own):
+
+| Step | The same computer, after it |
+|---|---|
+| running | `born=1795317133 beats=25 up=25.20`; Firecracker 193912 |
+| `systemctl restart sandcastle-engine` | recovered `{adopted: [lane-a-s1]}`; Firecracker **193912**; answered `born=1795317133 beats=32 up=31.36` |
+
+No `ended` for it until its destroy, 0 restarts of the engine's unit; after
+the destroy, no computer and no `vm-` cgroup were left, and the home was
+still active.
