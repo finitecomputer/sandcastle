@@ -264,6 +264,71 @@ instance role; test homes of 1 overcommitted vCPU and 1.5 GiB each,
 | one home restarted | it was down 8.0 s; the other nine answered every probe (two a second, none failed, no gap over the probe's) |
 | the parent rebooted | its homes and the router came back by themselves |
 
+## A home's size and speed (S9)
+
+Measured on 2026-11-22 on the test parent: a home of 2 vCPUs and 4 GiB
+with about 1,000 todo fragments, pages, lists and adds from the parent
+(each connection TLS to the home's own name, the fragment's name as its
+Host, so no fragment's name asked Let's Encrypt for a certificate), every
+request answered 200:
+
+| | page p50 | p90 | p99 | add p50 / p99 | the home |
+|---|---|---|---|---|---|
+| a fragment's first visit after a restart (300 of them) | 219 ms | 324 ms | 7.0 s | | 1,002 cells resident |
+| 100 active, 30 users (about 14 requests a second) | 226 ms | 2.8 s | 7.1 s | 298 ms / 6.3 s | load 1.5 of 2, celld 2.1 GiB |
+| 300 active, 90 users (about 36 a second) | 391 ms | 5.2 s | 9.1 s | 339 ms / 8.4 s | load 2.0 (full), 746 MiB free |
+
+What sets those numbers:
+
+- **One write on every request.** The cell counts every request a
+  fragment is handed in a SQL row (`count_request`, the owner's meter).
+  In a home, every write waits for its upload to the sealed bucket before
+  the answer, so even a 404 waits 85–150 ms. A cell without that count
+  (a scratch build on one test home, never shipped) served the same pages
+  at p50 2.5 ms, a stylesheet at 6.2 ms and a 404 at 1.8 ms: about fifty
+  times faster. The platform's own page, which touches no cell, answers
+  in 1.3–2 ms.
+- **Memory.** About 1.2–1.65 MiB of celld, and up to 2 MiB of the
+  home, per resident fragment cell, and more under load (celld grew from
+  1.4 to 2.6 GiB at 300 active). celld's idle eviction
+  (`HOME_IDLE_EVICT_S`, celld's `CELLD_IDLE_EVICT_S`) freed no cell here,
+  so every fragment touched stays resident: a 1.5 GiB home ran out of
+  memory at about 870 resident fragments, a 4 GiB one holds 1,000.
+- **Requests to S3 cost more than the compute.** An idle home with no
+  fragments writes about 0.5 sealed-journal objects a second, the owner's
+  about 1.1, with a counter write beside each: some $13–29 a month in
+  requests alone.
+- **Certificates.** Let's Encrypt issues at most 50 new certificates a
+  week for one registered domain, and each fragment's name gets its own:
+  a home of a thousand fragments under one domain cannot give each one a
+  certificate. A wildcard per home (DNS-01 through a delegated
+  `_acme-challenge`), the Public Suffix List or a raised limit can.
+
+So, within the budgets (an m8g.2xlarge is about $0.36 an hour, some $11.6
+a GiB-month of its sandbox pool): an org's home of 2 vCPUs and 4 GiB is
+about $47 a month of compute, plus its requests to S3, far inside $500,
+but it is fast only once a request no longer waits on a write. A person's
+1.5 GiB home is about $17 of compute, and its requests to S3 alone take it
+past $20.
+
+**Two ways a home could not start again,** found here, lane A's to fix:
+
+- a commit's record lost from the sealed journal when its caller was
+  dropped under memory pressure (fixed, celld#31; `home-deploy.sh` now
+  refuses to restart a home whose journal has a hole after its newest
+  snapshot, `home-journal-check.py`);
+- `nodes/home.json` in the sealed bucket left at a version its index does
+  not hold, after out-of-memory kills, and once after a graceful stop
+  that reached celld's 5 s shutdown bound with about 1,000 resident cells:
+  every start then refuses ("the bucket serves a version … this store did
+  not write last"). Open.
+
+**Why two stages of the same inputs measure differently:** the render
+stamps its time (`FRAGMENT_DEPLOYED_AT`) and its own output path into the
+release, and `mke2fs -d` copies every file's ctime, which no tool can set,
+into the image. A deploy measures and pins each slot, so this is no hole;
+a home's PCR0 cannot be rebuilt by someone else until both are fixed.
+
 ## Network
 
 The home's NIC is a tap with plain NAT on the parent (`src/net.rs`):
