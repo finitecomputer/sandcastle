@@ -2,10 +2,14 @@
 # start and again whenever it exits. A stop is graceful: SIGTERM to the
 # launcher alone (KillMode=mixed), which asks the home's workload to stop
 # (celld's last writes durable in the bucket) before its sandbox ends.
+# The engine (the computers', lane A's sandcastle-engine) starts first: the
+# home's bridge reaches it from the home's first second, and a parent's
+# reboot brings both back by themselves. A home with no engine is unaffected
+# (Wants= of a unit that is not there is no error).
 [Unit]
 Description=Fragment home: celld and the cell in a confidential Nitro sandbox
-After=network-online.target
-Wants=network-online.target
+After=network-online.target sandcastle-engine.service
+Wants=network-online.target sandcastle-engine.service
 
 [Service]
 ExecStart=/usr/local/bin/nitro-home up --conf /etc/nitro-home/home.json

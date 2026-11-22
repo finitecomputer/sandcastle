@@ -97,6 +97,9 @@ mount -o noatime /dev/mapper/home $STATE
 mkdir -p $STATE/celld $STATE/macrofiche $STATE/door $STATE/caddy $STATE/log
 LOG=$STATE/log
 say "disk mounted (new=$new)"
+# how many accounts the door holds, a count and nothing else: with no
+# exec, the only way to see from outside that they came through a change
+say "door: $(grep -o '"created_at_s"' $STATE/door/accounts.json 2>/dev/null | wc -l) accounts"
 
 pids=()
 stop_all() {
@@ -168,15 +171,27 @@ case "$HOME_ENGINE" in
     *) die "HOME_ENGINE is none or bridge" ;;
 esac
 
-# 7. celld: the release deployed when it changed, then the node
+# 7. celld: the release deployed when it changed, then the node, on the
+# fleet bucket's sealed form (celld#30): every object sealed before it
+# leaves the home, the chain's head in a counter outside the bucket, behind
+# other credentials. The first boot copies the plain objects into it and
+# keeps them (deleting them is the owner's call); later boots find it
+# sealed already.
 export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 AWS_ACCESS_KEY_ID=$(cat "$S/aws/access-key-id")
 AWS_SECRET_ACCESS_KEY=$(cat "$S/aws/secret-access-key")
-export AWS_REGION=$HOME_REGION CELLD_BUCKET=$HOME_BUCKET
+[ -f "$S/bucket-seal.json" ] || die "the bundle holds no bucket-seal.json"
+install -m 600 "$S/bucket-seal.json" /run/fragment-home/bucket-seal.json
+export CELLD_BUCKET_SEAL=/run/fragment-home/bucket-seal.json
+SEALED=$HOME_BUCKET/sealed
+m0=$(date +%s%N)
+/usr/local/bin/celld seal-bucket migrate --from "$HOME_BUCKET" --to "$SEALED" --region "$HOME_REGION" > $LOG/seal-migrate.log 2>&1 || { tail -c 2000 $LOG/seal-migrate.log; die "the bucket's migration"; }
+say "the bucket sealed in $(ms_since "$m0") ms ($(tail -n 1 $LOG/seal-migrate.log | tr -cd '[:alnum:] ,:.()-' | cut -c1-100))"
+export AWS_REGION=$HOME_REGION CELLD_BUCKET=$SEALED
 release=$(cat $R/release-id)
 if [ "$(cat $STATE/deployed 2>/dev/null || true)" != "$release" ]; then
     d0=$(date +%s%N)
-    ( cd $STATE && CELLD_ESBUILD=/usr/local/bin/esbuild CELLD_CONTAINER_ENGINE=$engine /usr/local/bin/celld deploy $R/cell/wrangler.home.jsonc --bucket "$HOME_BUCKET" --region "$HOME_REGION" ) > $LOG/deploy.log 2>&1 || { tail -c 2000 $LOG/deploy.log; die "celld deploy"; }
+    ( cd $STATE && CELLD_ESBUILD=/usr/local/bin/esbuild CELLD_CONTAINER_ENGINE=$engine /usr/local/bin/celld deploy $R/cell/wrangler.home.jsonc --bucket "$SEALED" --region "$HOME_REGION" ) > $LOG/deploy.log 2>&1 || { tail -c 2000 $LOG/deploy.log; die "celld deploy"; }
     echo "$release" > $STATE/deployed
     say "deployed $release in $(ms_since "$d0") ms"
 fi
