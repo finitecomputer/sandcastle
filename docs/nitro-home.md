@@ -208,8 +208,18 @@ run that stopped is run again to finish):
    its own;
 4. **its confs and release:** `cargo xtask home render` with
    `proxy_from` (below), and a launcher conf with no port forwarded;
-5. **its first deploy:** `home-deploy.sh --home <name>`, as any deploy:
-   sealed, built, staged, measured, pinned, switched onto.
+5. **its DNS** (`home-dns.py`, a token that edits the zone's DNS alone):
+   first a CAA record that lets no CA issue for its names, then its name
+   and `*.<its name>` pointing at the parent (a name with any record of
+   its own is no longer answered by the zone's wildcard);
+6. **its first deploy:** `home-deploy.sh --home <name>`, as any deploy:
+   sealed, built, staged, measured, pinned, switched onto;
+7. **its certificate:** the home prints the ACME account its front door
+   registered at its first start (`home: acme account <uri>`, refused by
+   the CAA then); the CAA record is changed to name that account alone and
+   no wildcard, and after its TTL the home restarts and gets its
+   certificate. No other account, the parent's included, could have been
+   issued one for its names in between.
 
 On the parent, a named home's slots, disks and conf are under
 `/var/lib/nitro-home/homes/<name>`, its sockets under `/run/nitro-home/<name>`,
@@ -235,6 +245,24 @@ homes' running confs at each switch, and HAProxy reloads only when it
 changed (open connections stay on the old process, for up to an hour).
 It logs abnormal connections alone. A parent whose one home takes 443
 forwarded can run no router.
+
+**Slots.** The Nitro driver's sandbox slot budget is set in sysfs and a
+reboot puts it back to 4, so `parent-ready.sh` installs `nitro-slots.service`,
+which raises it at every boot before the engine and the homes start.
+
+Proved on 2026-11-22, on a second parent (an m8g.2xlarge, its own
+instance role; test homes of 1 overcommitted vCPU and 1.5 GiB each,
+`HOME_ENGINE=none`):
+
+| | |
+|---|---|
+| ten homes, one command each | 203–270 s a home: about 50 s to deploy, 70 s waiting out the CAA record's TTL, then a restart for the certificate |
+| a home's boot | its sandbox up in about 0.6 s, celld serving in about 4.2 s, the front door serving with a valid certificate in 7.4–12.4 s |
+| an idle home | about 300–350 MiB of its 1.4 GiB used, celld about 110 MiB |
+| ten at once | 5.9 GiB of the 22.5 GiB pool left, 10 of 20 slots used, the 7 sandbox CPUs shared and the parent's load 0.2 |
+| from the operator's machine | each home answered 200 through its own certificate |
+| one home restarted | it was down 8.0 s; the other nine answered every probe (two a second, none failed, no gap over the probe's) |
+| the parent rebooted | its homes and the router came back by themselves |
 
 ## Network
 
