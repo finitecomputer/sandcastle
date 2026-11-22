@@ -178,6 +178,64 @@ pool (CPUs, memory and PCIe slots free) and the host. `host/nitro-status.sh`
 asks every parent listed on the operator's machine and prints a line per
 home and per parent (`--json` for the whole).
 
+## Many homes on one parent
+
+A parent holds several homes, each an org's, each its own confidential
+sandbox, disk, key and bucket prefix. One command on the operator's
+machine makes one:
+
+    host/home-create.sh <name> --parent <dir>
+
+It prints `{"home": "https://<name>.<suffix>", "door": "…/__door"}`: the
+door is what a hosted platform's "Add a private agent" asks (fragment's
+`private_home.door`). `<dir>/homes.json`, the operator's, names what the
+parent's homes share (its ssh host, the suffix, the region, the parent's
+instance role, the fleet and counter buckets, the fragment tree that
+renders, the models, the inviter's npub, a home's size, and the CID and
+subnet bases). Each home's own files are in `~/.cache/nitro-real/homes/<name>`
+on the operator's machine. The command makes, each only when missing (a
+run that stopped is run again to finish):
+
+1. **its place:** the first number n no home on that parent holds, and
+   from it a CID, a tap (`nitroh<n>`) and a /24;
+2. **its key** (KMS, tagged): admins seal with it and never open; the
+   parent's role opens it only for the home's own image, which the first
+   deploy pins (until then, no image);
+3. **its bucket's credentials:** an IAM user that reaches the prefix
+   `<name>/` of the fleet bucket and nothing else (its list limited to that
+   prefix too), and the bucket's seal (celld#30): a new key, and a counter
+   at `homes/<name>/bucket` in the counter bucket, behind an IAM user of
+   its own;
+4. **its confs and release:** `cargo xtask home render` with
+   `proxy_from` (below), and a launcher conf with no port forwarded;
+5. **its first deploy:** `home-deploy.sh --home <name>`, as any deploy:
+   sealed, built, staged, measured, pinned, switched onto.
+
+On the parent, a named home's slots, disks and conf are under
+`/var/lib/nitro-home/homes/<name>`, its sockets under `/run/nitro-home/<name>`,
+and its unit is `nitro-home@<name>` (`home-name.sh`; stage, switch and deploy
+take `--home <name>`). Staging refuses a CID, tap or address another home
+there holds. The parent's one home from before names keeps its layout and
+unit. Deploys to one parent go one at a time (a lock on the operator's
+machine); the parent's build is shared, and a step whose pin and outputs
+are unchanged is kept, so a new parent given another's `out/` builds only
+the sandcastle tree.
+
+**The SNI router.** Several homes cannot each have the parent's 443
+forwarded. `home-router.sh` runs HAProxy there in TCP mode: it reads each
+connection's ClientHello for its server name and passes the connection,
+untouched, to the home that holds the name (its `HOME_PLATFORM`
+exactly, or any name under its `HOME_SUFFIX`), first sending the PROXY
+protocol's header (v2) with the client's address. TLS still ends in the
+home, and Let's Encrypt's TLS-ALPN-01 passes through the same way. The
+home's Caddy reads that header from the parent's address alone
+(`proxy_from`), so the client's address reaches celld as before. A name no
+home holds, or no name, is closed. The router's config is written from the
+homes' running confs at each switch, and HAProxy reloads only when it
+changed (open connections stay on the old process, for up to an hour).
+It logs abnormal connections alone. A parent whose one home takes 443
+forwarded can run no router.
+
 ## Network
 
 The home's NIC is a tap with plain NAT on the parent (`src/net.rs`):
