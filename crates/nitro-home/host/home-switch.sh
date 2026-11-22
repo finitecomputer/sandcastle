@@ -7,7 +7,7 @@
 # `current` then names the slot and `previous` the one it ran before; the
 # home restarts onto it gracefully (its stop keeps its computers running),
 # and the switch waits for this start to serve ("home: serving") with its
-# door holding as many accounts as the start before. If it fails, or does
+# door holding no fewer accounts than the start before. If it fails, or does
 # not within SWITCH_S_MAX, the home goes back onto the slot it ran, and the
 # switch exits non-zero. Prints the pause: from the restart to serving.
 # A home whose front door never had a valid certificate (a new home whose
@@ -64,7 +64,8 @@ start() {
     [ "${pid:-0}" != 0 ] || { echo "no process after the restart"; return 1; }
     verdict=$(serve "$pid" "$t0") || { echo "$verdict"; return 1; }
     now=$(journalctl _PID="$pid" -o cat --no-pager | sed -n 's/.*home: door: \([0-9]*\) accounts.*/\1/p' | tail -n 1)
-    if [ -n "$before" ] && [ "$now" != "$before" ]; then echo "the door holds $now accounts, $before before"; return 1; fi
+    # accounts made since the start before count too: only fewer is a loss
+    if [ -n "$before" ] && { [ -z "$now" ] || [ "$now" -lt "$before" ]; }; then echo "the door holds ${now:-no} accounts, $before before"; return 1; fi
     echo "${verdict#ok }"
 }
 point current "$target"
