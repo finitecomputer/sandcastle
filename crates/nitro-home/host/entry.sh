@@ -24,7 +24,8 @@
 # Settings, none secret, from the launcher's conf: HOME_BUCKET (s3://…),
 # HOME_REGION, HOME_PLATFORM (the platform's host), HOME_SUFFIX (the
 # fragments'), HOME_ENGINE (none, or bridge: the parent's container
-# engine through sandcastle-bridge).
+# engine through sandcastle-bridge), and the home's size: HOME_IDLE_EVICT_S
+# and HOME_MAX_RESIDENT_CELLS (celld's idle eviction and resident cap).
 #
 # Any service that exits takes the home down (the parent's service starts
 # it again); SIGTERM stops it gracefully: celld first (its last data
@@ -189,6 +190,11 @@ m0=$(date +%s%N)
 /usr/local/bin/celld seal-bucket migrate --from "$HOME_BUCKET" --to "$SEALED" --region "$HOME_REGION" > $LOG/seal-migrate.log 2>&1 || { tail -c 2000 $LOG/seal-migrate.log; die "the bucket's migration"; }
 say "the bucket sealed in $(ms_since "$m0") ms ($(tail -n 1 $LOG/seal-migrate.log | tr -cd '[:alnum:] ,:.()-' | cut -c1-100))"
 export AWS_REGION=$HOME_REGION CELLD_BUCKET=$SEALED
+# the home's size (its launcher conf, none secret): idle cells evicted
+# after HOME_IDLE_EVICT_S, at most HOME_MAX_RESIDENT_CELLS resident (celld's
+# own defaults when unset: none evicted, no cap)
+[ -z "${HOME_IDLE_EVICT_S:-}" ] || export CELLD_IDLE_EVICT_S=$HOME_IDLE_EVICT_S
+[ -z "${HOME_MAX_RESIDENT_CELLS:-}" ] || export CELLD_MAX_RESIDENT_CELLS=$HOME_MAX_RESIDENT_CELLS
 release=$(cat $R/release-id)
 if [ "$(cat $STATE/deployed 2>/dev/null || true)" != "$release" ]; then
     d0=$(date +%s%N)
@@ -212,6 +218,18 @@ say "celld serving in $(ms_since "$t0") ms from the clock"
 # 8. the front door, last: what it lets in is ready behind it
 XDG_DATA_HOME=$STATE/caddy XDG_CONFIG_HOME=$STATE/caddy /usr/local/bin/caddy run --config $R/Caddyfile --adapter caddyfile > $LOG/caddy.out 2>&1 &
 pids+=($!)
+# its ACME account's URI (public: the CAA record names it), once Caddy has
+# registered it, which it does at its first order: the operator names it
+# in the home's CAA record (docs/nitro-home.md, "Certificates and CAA");
+# its key never leaves this disk
+account=$STATE/caddy/acme/acme-v02.api.letsencrypt.org-directory/users/default/default.json
+for _ in $(seq 300); do [ -s "$account" ] && break; sleep 0.1; done
+acme_account() {
+    local uri
+    uri=$(jq -r '.location // empty' "$account" 2>/dev/null || true)
+    [[ "$uri" =~ ^https://acme-v02\.api\.letsencrypt\.org/acme/acct/[0-9]+$ ]] && say "acme account $uri"
+}
+acme_account || say "acme account: none yet (said once it is)"
 for _ in $(seq 600); do curl -s -o /dev/null --resolve "$HOME_PLATFORM:443:127.0.0.1" "https://$HOME_PLATFORM/" && break; sleep 0.1; done
 if curl -sf -o /dev/null --resolve "$HOME_PLATFORM:443:127.0.0.1" "https://$HOME_PLATFORM/"; then
     say "serving in $(ms_since "$t0") ms from the clock (TLS here, its certificate valid)"
@@ -233,17 +251,24 @@ stats_line() {
     read -r disk_used disk_free < <(df -m --output=used,avail $STATE | tail -n 1)
     rss=$(awk '/^VmRSS:/ {print int($2/1024)}' /proc/$celld_pid/status 2>/dev/null || echo 0)
     # each WARN and ERROR line since the last minute, counted by its event's name
+    # since the last line's offset, kept in a file: this runs in $(…), whose
+    # variables do not outlive it
+    local stats_at; stats_at=$(cat /run/fragment-home/stats-at 2>/dev/null || echo 0)
     events=$(tail -c +$((stats_at + 1)) $LOG/celld.log 2>/dev/null | grep -E ' (WARN|ERROR) |"level":"(warn|error)"|cell_console: ERROR' \
         | grep -oE 'event="[a-z0-9_.-]+"|"event":"[a-z0-9_.-]+"' | tr -d '"' | sed 's/^event[=:]//' | sort | uniq -c \
         | awk 'BEGIN { printf "{" } { printf "%s\"%s\":%d", (NR > 1 ? "," : ""), $2, $1 } END { printf "}" }')
-    stats_at=$(stat -c %s $LOG/celld.log 2>/dev/null || echo 0)
+    stat -c %s $LOG/celld.log > /run/fragment-home/stats-at 2>/dev/null || true
     jq -cn --argjson cells "${cells:-0}" --arg version "$version" --arg generation "$gen" --argjson isolates "${isolates:-null}" \
         --argjson mem_total "$mem_total" --argjson mem_avail "$mem_avail" --argjson load "$load" \
         --argjson disk_used "$disk_used" --argjson disk_free "$disk_free" --argjson celld_rss "$rss" --argjson events "${events:-{\}}" \
         '{cells: $cells, deployment: {version: $version, generation: $generation}, isolates: $isolates, mem_mib: {total: $mem_total, available: $mem_avail}, load1: $load, data_mib: {used: $disk_used, free: $disk_free}, celld_rss_mib: $celld_rss, events: $events}' 2>/dev/null
 }
-stats_at=$(stat -c %s $LOG/celld.log 2>/dev/null || echo 0)
-( while sleep 60; do line=$(stats_line) && [ -n "$line" ] && say "stats $line"; done ) &
+stat -c %s $LOG/celld.log > /run/fragment-home/stats-at 2>/dev/null || echo 0 > /run/fragment-home/stats-at
+( said=false; if [ -s "$account" ]; then said=true; fi
+  while sleep 60; do
+    line=$(stats_line) && [ -n "$line" ] && say "stats $line"
+    $said || { acme_account && said=true; } || true
+  done ) &
 stats_pid=$!
 
 # a service that exits takes the home down

@@ -19,8 +19,10 @@
 # `operators`, `inviter` (the platform's npub whose asks make accounts),
 # `size` ({vcpus, memory_mib, cpu_overcommit, data_gib, scratch_gib}),
 # `cid_base`, `subnet` (`a.b`: home n is on a.b.n.0/24), `env` (more
-# settings for every home, such as HOME_ENGINE=none) and `door` ([<fragment
-# tree>, <git ref>]: the identity door's source, home-deploy.sh --door).
+# settings for every home, such as HOME_ENGINE=none), `door` ([<fragment
+# tree>, <git ref>]: the identity door's source, home-deploy.sh --door),
+# `address` (the parent's public address) and `dns` ({zone, token_file}:
+# a token that edits that zone's DNS, home-dns.py).
 #
 # Made for the home, each only when missing (so a run that stopped is run
 # again to finish), in $NITRO_HOMES/<name> (default ~/.cache/nitro-real/homes):
@@ -37,8 +39,16 @@
 #  4. its render conf, its launcher conf (behind the parent's SNI router:
 #     no port forwarded, the PROXY protocol from the parent's address) and
 #     its release (`cargo xtask home render`);
-#  5. then its first deploy (home-deploy.sh --home): sealed, built, staged,
-#     measured, pinned, started and routed.
+#  5. its DNS (home-dns.py): its name and its fragments' pointing at the
+#     parent, and a CAA record that lets no CA issue for them yet;
+#  6. then its first deploy (home-deploy.sh --home): sealed, built, staged,
+#     measured, pinned, started and routed;
+#  7. its certificate: the home prints the ACME account its front door
+#     registered at its first start ("home: acme account <uri>"), the CAA
+#     record is changed to name that account alone (and no wildcard), and
+#     after the record's TTL the home restarts and gets its certificate. No
+#     other account, and so not the parent, could be issued one for its
+#     names at any moment in between.
 #
 # Secrets go only into the home's directory (owner-only) and its sealed
 # bundle; nothing secret is printed or passed on a command line. Every AWS
@@ -171,11 +181,50 @@ PY
 [ -e "$H/pins" ] || echo "# the computer images this home starts (none yet)" > "$H/pins"
 python3 -I -c 'import json,sys; print(*json.load(open(sys.argv[1]))["ssh"])' "$P" > "$H/parent"
 tree=$(get fragment_tree)
-( cd "$tree" && cargo xtask home render --conf "$H/home.json" --secrets "$H/secrets" --out "$H/out" ) > "$H/render.log" 2>&1 || { tail -n 20 "$H/render.log" >&2; say "the render"; exit 1; }
-say "its release rendered"
+# rendered again only when its conf changed: a render stamps its time
+# (FRAGMENT_DEPLOYED_AT), so a new one is a new image and a new PCR0
+if [ "$(sha256sum < "$H/home.json")" != "$(cat "$H/out/home.json.sha256" 2>/dev/null)" ] || [ ! -s "$H/out/release/release-id" ]; then
+    ( cd "$tree" && cargo xtask home render --conf "$H/home.json" --secrets "$H/secrets" --out "$H/out" ) > "$H/render.log" 2>&1 || { tail -n 20 "$H/render.log" >&2; say "the render"; exit 1; }
+    sha256sum < "$H/home.json" > "$H/out/home.json.sha256"
+    say "its release rendered"
+fi
 
-# 5. its first deploy
+# 5. its DNS: no CA may issue for its names until its own account is
+# named, written before its names point at the parent
+if [ -s "$H/acme-account" ]; then "$here/home-dns.py" "$P" caa "$host" "$(cat "$H/acme-account")" >&2; else "$here/home-dns.py" "$P" caa "$host" none >&2; fi
+"$here/home-dns.py" "$P" point "$host" >&2
+
+# 6. its first deploy
 door=$(python3 -I -c 'import json,sys; print(*json.load(open(sys.argv[1]))["door"])' "$P")
 NITRO_HOME_DIR=$H "$here/home-deploy.sh" --home "$name" --door $door
+
+# 7. its certificate, for its own account alone
+read -r pconf phost < "$H/parent"
+on_parent() { ssh -F "$pconf" "$phost" "$@"; }
+unit=nitro-home@$name
+account=$(on_parent "sudo journalctl -u $unit -o cat --no-pager | sed -n 's/.*home: acme account \(https:[^ ]*\).*/\1/p' | tail -n 1")
+[ -n "$account" ] || { say "the home printed no ACME account"; exit 1; }
+if [ "$(cat "$H/acme-account" 2>/dev/null)" != "$account" ]; then
+    echo "$account" > "$H/acme-account"
+    "$here/home-dns.py" "$P" caa "$host" "$account" >&2
+    say "its CAA names its own account; waiting out the record's TTL"
+    sleep 70
+fi
+if ! curl -s -o /dev/null -m 10 "https://$host/"; then
+    # a restart orders the certificate now (Caddy's own retry may wait minutes)
+    pid0=$(on_parent "systemctl show -p MainPID --value $unit")
+    on_parent "sudo systemctl restart $unit"
+    verdict=
+    for _ in $(seq 300); do
+        pid=$(on_parent "systemctl show -p MainPID --value $unit")
+        if [ "$pid" != "$pid0" ] && [ "$pid" != 0 ]; then
+            verdict=$(on_parent "sudo journalctl _PID=$pid -o cat --no-pager | grep -oE 'home: serving in [0-9]+ ms|no valid certificate|home: failed.*' | head -n 1" || true)
+            [ -n "$verdict" ] && break
+        fi
+        sleep 1
+    done
+    case "$verdict" in *"serving in"*) say "certificate valid: ${verdict#home: }" ;; *) say "no certificate: ${verdict:-no verdict}"; exit 1 ;; esac
+fi
+curl -s -o /dev/null -m 10 "https://$host/" || { say "https://$host/ does not answer with a valid certificate"; exit 1; }
 python3 -I -c 'import json,sys; h=sys.argv[1]; print(json.dumps({"home": f"https://{h}", "door": f"https://{h}/__door"}))' "$host" > "$H/created"
 cat "$H/created"
