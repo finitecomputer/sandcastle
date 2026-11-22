@@ -132,5 +132,5 @@ PATH="$SC/target/release:$PATH" "$SC/crates/nitro-home/host/pin-pcr0.sh" "$H/att
 # journal lets it start again
 journal_ok
 say "switching"
-ssh $S "$P" "sudo bash $host/home-switch.sh $named $slot"
+ssh $S "$P" "sudo SWITCH_S_MAX=${SWITCH_S_MAX:-300} bash $host/home-switch.sh $named $slot"
 say "done in $(( $(date +%s) - t0 )) s"

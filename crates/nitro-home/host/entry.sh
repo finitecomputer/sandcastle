@@ -206,13 +206,23 @@ CELLD_WATCH=$STATE/celld CELLD_NODE=home CELLD_SECRETS_FILE=$R/celld-secrets.jso
 CELLD_TRUST_FORWARDED_HEADERS=1 CELLD_DURABILITY=bucket CELLD_SHUTDOWN_TOTAL_MS=5000 \
 CELLD_FACET_MAX_BYTES=20971520 CELLD_DYNAMIC_LOCKDOWN=1 CELLD_MAX_CELL_REQUESTS=512 \
     /usr/local/bin/celld --no-control-plane --listen 127.0.0.1:8080 --internal-listen 127.0.0.1:8081 --region "$HOME_REGION" \
-    > >(tee -a $LOG/celld.log | grep --line-buffered -E " (WARN|ERROR) |listening|panicked") 2>&1 &
+    > >(tee -a $LOG/celld.log | grep --line-buffered -E " (WARN|ERROR) |listening|panicked|^Error|^Caused by|^ +[0-9]+: ") 2>&1 &
 celld_pid=$!
 # celld's whole log, the cell's lines among them, stays on the home's
 # disk; the parent sees its warnings and errors
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-for _ in $(seq 600); do curl -sf http://127.0.0.1:8080/.well-known/celld/health > /dev/null && break; sleep 0.05; done
-curl -sf http://127.0.0.1:8080/.well-known/celld/health > /dev/null || die "celld never answered its health"
+# celld answers once it is ready: after a crash, that is once it has taken
+# back what the stopped node held, which grows with the home's cells; its
+# bound is HOME_CELLD_READY_S (default 600), and the wait says how it goes
+ready_max=${HOME_CELLD_READY_S:-600}
+w0=$(date +%s)
+until curl -sf -m 5 http://127.0.0.1:8080/.well-known/celld/health > /dev/null; do
+    waited=$(( $(date +%s) - w0 ))
+    [ "$waited" -lt "$ready_max" ] || die "celld never answered its health (${ready_max} s)"
+    kill -0 $celld_pid 2>/dev/null || die "celld exited before it answered its health"
+    [ $(( waited % 30 )) -ne 29 ] || say "celld not serving yet (${waited} s)"
+    sleep 1
+done
 say "celld serving in $(ms_since "$t0") ms from the clock"
 
 # 8. the front door, last: what it lets in is ready behind it
