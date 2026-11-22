@@ -6,6 +6,7 @@
 pub mod api;
 pub mod client;
 pub mod config;
+pub mod ends;
 pub mod exec_stream;
 pub mod load;
 #[cfg(unix)]

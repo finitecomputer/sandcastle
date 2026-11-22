@@ -292,24 +292,36 @@ and celld still sees one engine:
   through the computer's own engine over the network, sealed end to end
   between the home and the guest, as through the home's own parent.
 
-Two network hops, each a relay of `sandcastle-bridge relay --listen <end>
---to <end> [--allow <cidr>]...` (an end is `unix:/<path>` or
-`tcp:<address>:<port>`; a TCP listener takes only its `--allow` ranges, and
-every connection is a relay of its own, at most 1024 live):
+**Each computer's egress goes to its own home.** A start may name where
+its computer's egress sessions go (`egressTo`: `unix:/<path>` or
+`tcp:<address>:<port>`), and the engine relays them there if its config
+allows that end (`nitro.session_egress_allow`: `unix:/<dir>/` for a socket
+below it, or `tcp:<cidr>`), or refuses the start before anything is
+reserved. A start that names none keeps the engine's `session_egress`, as
+a parent with one home always has. The home half names it for each engine
+it drives: `--egress-to <end>` for its own parent's (several homes on one
+parent: each home's own parent-half socket), and `,egress=<end>` after a
+`--remote` (where its parent takes this home's egress from the network).
+The engine keeps it in the computer's record, so a computer it adopts
+after a restart keeps it too.
+
+Two network hops, the second dialled by the engine itself; the others are
+relays of `sandcastle-bridge relay --listen <end> --to <end> [--allow
+<cidr>]...` (an end is `unix:/<path>` or `tcp:<address>:<port>`; a TCP
+listener takes only its `--allow` ranges, and every connection is a relay
+of its own, at most 1024 live):
 
 - **The engine's API** on each other parent: `--listen tcp:<its private
   address>:5100 --to unix:/var/lib/sandcastle-engine/engine.sock --allow
   <the home's parent>/32`.
-- **Its computers' egress** back to the home: that engine's
-  `nitro.session_egress` names a relay's socket, `--listen
-  unix:/run/sandcastle/egress-out.sock --to tcp:<the home's parent>:5103`,
-  and on the home's parent a relay `--listen tcp:<its private
-  address>:5103 --to unix:<the parent half's --egress socket> --allow
-  <the other parents>`. Each egress session is the guest's Noise session to
-  its home, under its claim's secret: the relays and the network carry
-  ciphertext.
+- **Its computers' egress** back to their home: the engine dials the
+  start's `egressTo`, and on the home's parent a relay per home `--listen
+  tcp:<its private address>:<a port of the home's> --to unix:<that home's
+  parent-half --egress socket> --allow <the other parents>`. Each egress
+  session is the guest's Noise session to its home, under its claim's
+  secret: the relays and the network carry ciphertext.
 
-The parents' security group takes 5100 and 5103 only from each other. A
+The parents' security group takes 5100 and the homes' egress ports only from each other. A
 node builds each image's root itself, so each engine gives an image its
 own PCR0: the home's pins hold every engine's (`POST
 /v1/images/<ref>/measure` on each).

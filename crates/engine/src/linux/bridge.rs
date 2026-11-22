@@ -79,9 +79,14 @@ pub struct Home {
     /// sessions (the engine's `nitro.session_egress`), in place of vsock 5003.
     pub egress_at: Option<PathBuf>,
     /// Engines on other parents this home also drives, by name, each
-    /// reached over the network (docs/nitro.md, "Computers on other
-    /// parents"). Sessions only.
-    pub remotes: Vec<(String, End)>,
+    /// reached over the network, and where each is to send this home's
+    /// computers' egress (docs/nitro.md, "Computers on other parents").
+    /// Sessions only.
+    pub remotes: Vec<(String, End, Option<End>)>,
+    /// Where this parent's engine is to send this home's computers' egress
+    /// (each start's `egressTo`): several homes on one parent each name
+    /// their own parent half's socket. None, the engine's own.
+    pub egress_to: Option<End>,
 }
 
 /// The parent's half.
@@ -103,58 +108,7 @@ pub struct Parent {
     pub egress: Option<PathBuf>,
 }
 
-/// One end of a relay between machines: a unix socket's path, or a TCP
-/// address.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum End {
-    Unix(PathBuf),
-    Tcp(std::net::SocketAddr),
-}
-
-impl std::str::FromStr for End {
-    type Err = String;
-    fn from_str(s: &str) -> Result<End, String> {
-        match s.split_once(':') {
-            Some(("unix", p)) if p.starts_with('/') => Ok(End::Unix(p.into())),
-            Some(("tcp", a)) => a.parse().map(End::Tcp).map_err(|e| format!("{s}: {e}")),
-            _ => Err(format!("{s}: unix:/<path> or tcp:<address>:<port>")),
-        }
-    }
-}
-
-/// An address range a TCP relay takes connections from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Cidr {
-    net: std::net::IpAddr,
-    bits: u8,
-}
-
-impl std::str::FromStr for Cidr {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Cidr, String> {
-        let (addr, bits) = s.split_once('/').unwrap_or((s, ""));
-        let net: std::net::IpAddr = addr.parse().map_err(|e| format!("{s}: {e}"))?;
-        let max = if net.is_ipv4() { 32 } else { 128 };
-        let bits = if bits.is_empty() { max } else { bits.parse::<u8>().ok().filter(|b| *b <= max).ok_or_else(|| format!("{s}: a prefix of 0 to {max}"))? };
-        Ok(Cidr { net, bits })
-    }
-}
-
-impl Cidr {
-    pub fn contains(&self, ip: std::net::IpAddr) -> bool {
-        let ip = match ip {
-            std::net::IpAddr::V6(v6) => v6.to_ipv4_mapped().map(std::net::IpAddr::V4).unwrap_or(ip),
-            v4 => v4,
-        };
-        let (a, b, len): (u128, u128, u32) = match (self.net, ip) {
-            (std::net::IpAddr::V4(n), std::net::IpAddr::V4(i)) => (u32::from(n) as u128, u32::from(i) as u128, 32),
-            (std::net::IpAddr::V6(n), std::net::IpAddr::V6(i)) => (u128::from(n), u128::from(i), 128),
-            _ => return false,
-        };
-        let shift = len - self.bits as u32;
-        shift >= len || (a >> shift) == (b >> shift)
-    }
-}
+pub use crate::ends::{Cidr, End};
 
 /// A relay between machines (docs/nitro.md, "Computers on other parents"):
 /// each connection to `listen` carried to `to` as its bytes come. A TCP
@@ -247,8 +201,8 @@ pub fn home(h: Home) -> io::Result<()> {
     if !h.remotes.is_empty() && h.sessions.is_none() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "engines on other parents take a home of sessions (--sessions)"));
     }
-    for (name, end) in &h.remotes {
-        eprintln!("sandcastle-bridge: home: engine {name} at {end:?}");
+    for (name, end, egress) in &h.remotes {
+        eprintln!("sandcastle-bridge: home: engine {name} at {end:?}, its egress to {egress:?}");
     }
     let cid = h.cid;
     let (tx, ended) = mpsc::channel();
@@ -261,10 +215,14 @@ pub fn home(h: Home) -> io::Result<()> {
         None => Arc::new(move || vsock_connect(cid, PORT_PORTS)),
     };
     if let Some((state, pins)) = &h.sessions {
-        let mut engines = vec![super::home::EngineAt { name: "local".into(), up: up_engine.clone() }];
-        for (name, end) in &h.remotes {
+        let spelled = |e: &End| match e {
+            End::Unix(p) => format!("unix:{}", p.display()),
+            End::Tcp(a) => format!("tcp:{a}"),
+        };
+        let mut engines = vec![super::home::EngineAt { name: "local".into(), up: up_engine.clone(), egress_to: h.egress_to.as_ref().map(spelled) }];
+        for (name, end, egress) in &h.remotes {
             let end = end.clone();
-            engines.push(super::home::EngineAt { name: name.clone(), up: Arc::new(move || dial(&end)) });
+            engines.push(super::home::EngineAt { name: name.clone(), up: Arc::new(move || dial(&end)), egress_to: egress.as_ref().map(spelled) });
         }
         let sessions = Arc::new(super::home::Sessions::open(state, pins, engines)?);
         let ended_tx = Ended("engine", tx.clone());
