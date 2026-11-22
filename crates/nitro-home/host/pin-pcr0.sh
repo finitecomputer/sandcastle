@@ -22,6 +22,10 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --profile) profile=$2; shift 2 ;;
         --region) region=$2; shift 2 ;;
+        # the PCR0 to keep beside the new one: the running image's, so a
+        # rollback to it opens (home-deploy.sh reads it from that image's
+        # own boot attestation); without it, the policy's first is kept
+        --keep) keep=$2; shift 2 ;;
         *) echo "pin-pcr0: unknown $1" >&2; exit 2 ;;
     esac
 done
@@ -35,9 +39,9 @@ echo "$line" | sed 's/.*document=\([0-9a-f]*\).*/\1/' | python3 -I -c "import sy
 verified=$(nitro-verify --document "$work/doc" --nonce "$nonce")
 echo "$verified" | python3 -I -c "import json, sys; d = json.load(sys.stdin); assert d['verified'] is True" || { echo "pin-pcr0: the document did not verify" >&2; exit 1; }
 pcr0=$(echo "$verified" | python3 -I -c "import json, sys; print(json.load(sys.stdin)['pcrs']['0'])")
-python3 -I - "$policy" "$pcr0" <<'PY'
+python3 -I - "$policy" "$pcr0" "${keep:-}" <<'PY'
 import json, sys
-path, pcr0 = sys.argv[1:3]
+path, pcr0, keep = sys.argv[1:4]
 d = json.load(open(path))
 (s,) = [s for s in d["Statement"] if s["Sid"] == "ReleaseOnlyToTheHomeImage"]
 cond = s["Condition"]["StringEqualsIgnoreCase"]
@@ -48,6 +52,9 @@ assert pcr0 != "0" * 96, "debug mode's PCR0 is never released to"
 # the one pinned now (the running image's, first in the list) stays, for
 # a rollback; any older one goes
 kept = [p for p in before if p != pcr0][:1]
+if keep:
+    assert set(keep) <= set("0123456789abcdef") and len(keep) == 96, "--keep is a SHA-384 PCR0"
+    kept = [keep] if keep != pcr0 else []
 cond["kms:RecipientAttestation:PCR0"] = [pcr0] + kept
 json.dump(d, open(path, "w"), indent=1)
 PY

@@ -69,11 +69,22 @@ say "building on the parent"
 ssh $S nitro-home 'bash ~/sandcastle/crates/nitro-home/host/home-build.sh ~/fragment ~/sandcastle > ~/home-build/build.log 2>&1 || { tail -n 20 ~/home-build/build.log; exit 1; }'
 slot=$(ssh $S nitro-home 'sudo bash ~/sandcastle/crates/nitro-home/host/home-stage.sh ~/home-build/out ~/home-release ~/sealed.json ~/launcher.json ~/pins' | tail -n 1)
 say "staged $slot"
-# 4. measured beside it, verified here, pinned
+# 4. measured beside it, verified here, pinned. Each slot's PCR0, once
+# verified here, is kept here ($H/attest/slots.tsv): the policy then keeps
+# the running slot's, so a rollback to it opens, and the parent naming the
+# running slot can only name one of the home's own verified images.
 mkdir -p "$H/attest"
 ssh $S nitro-home "sudo /var/lib/nitro-home/slots/$slot/nitro-home measure --conf /var/lib/nitro-home/slots/$slot/home.json" > "$H/attest/measure-$slot.json"
 python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["attestation"])' "$H/attest/measure-$slot.json" > "$H/attest/measure-$slot.log"
-PATH="$SC/target/release:$PATH" "$SC/crates/nitro-home/host/pin-pcr0.sh" "$H/attest/measure-$slot.log" "$(cat "$H/kms/key-id")" "$H/kms/policy.json" >&2
+line=$(cat "$H/attest/measure-$slot.log")
+nonce=${line#*nonce=}; nonce=${nonce%% *}
+echo "${line#*document=}" | python3 -I -c "import sys; sys.stdout.buffer.write(bytes.fromhex(sys.stdin.read().strip()))" > "$H/attest/measure-$slot.doc"
+pcr0=$("$SC/target/release/nitro-verify" --document "$H/attest/measure-$slot.doc" --nonce "$nonce" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); assert d["verified"] is True; print(d["pcrs"]["0"])')
+printf '%s\t%s\n' "$slot" "$pcr0" >> "$H/attest/slots.tsv"
+running_slot=$(ssh $S nitro-home 'sudo readlink -f /var/lib/nitro-home/current' | xargs basename)
+running=$(awk -F'\t' -v s="$running_slot" '$1 == s { p = $2 } END { print p }' "$H/attest/slots.tsv")
+[ -n "$running" ] || { say "the running slot $running_slot has no PCR0 verified here (attest/slots.tsv): refusing to drop it from the policy"; exit 1; }
+PATH="$SC/target/release:$PATH" "$SC/crates/nitro-home/host/pin-pcr0.sh" "$H/attest/measure-$slot.log" "$(cat "$H/kms/key-id")" "$H/kms/policy.json" --keep "$running" >&2
 # 5. switched onto, its health checked, back by itself on failure
 say "switching"
 ssh $S nitro-home "sudo bash ~/sandcastle/crates/nitro-home/host/home-switch.sh $slot"

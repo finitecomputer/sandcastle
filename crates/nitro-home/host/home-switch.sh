@@ -24,11 +24,12 @@ point() { ln -sfn "$2" "$base/$1.new" && mv -T "$base/$1.new" "$base/$1"; }
 # the door's account count at the start before: a count, nothing else
 accounts() { journalctl -u nitro-home --since "$1" -o cat --no-pager | sed -n 's/.*home: door: \([0-9]*\) accounts.*/\1/p' | tail -n 1; }
 before=$(accounts "-30 days")
-# waits for this start's verdict; prints "ok <ms>" or why not
+# waits for this start's verdict, from its own process's lines alone (the
+# one it replaced says "exited" as it stops); prints "ok <ms>" or why not
 serve() {
-    local since=$1 t0=$2 line
+    local pid=$1 t0=$2 line
     for _ in $(seq $((SWITCH_S_MAX * 2))); do
-        line=$(journalctl -u nitro-home --since "$since" -o cat --no-pager | grep -E 'home: (serving|failed)|"home":"(failed|exited|lost)"' | head -n 1 || true)
+        line=$(journalctl _PID="$pid" -o cat --no-pager | grep -E 'home: (serving|failed)|"home":"(failed|exited|lost)"' | head -n 1 || true)
         case "$line" in
             *"home: serving"*) echo "ok $(( ($(date +%s%N) - t0) / 1000000 ))"; return 0 ;;
             ?*) echo "failed: $line"; return 1 ;;
@@ -39,12 +40,13 @@ serve() {
     return 1
 }
 start() {
-    local since t0 verdict now
-    since=$(date -u +'%Y-%m-%d %H:%M:%S')
+    local pid t0 verdict now
     t0=$(date +%s%N)
     systemctl restart nitro-home
-    verdict=$(serve "$since" "$t0") || { echo "$verdict"; return 1; }
-    now=$(accounts "$since")
+    pid=$(systemctl show -p MainPID --value nitro-home)
+    [ "${pid:-0}" != 0 ] || { echo "no process after the restart"; return 1; }
+    verdict=$(serve "$pid" "$t0") || { echo "$verdict"; return 1; }
+    now=$(journalctl _PID="$pid" -o cat --no-pager | sed -n 's/.*home: door: \([0-9]*\) accounts.*/\1/p' | tail -n 1)
     if [ -n "$before" ] && [ "$now" != "$before" ]; then echo "the door holds $now accounts, $before before"; return 1; fi
     echo "${verdict#ok }"
 }
