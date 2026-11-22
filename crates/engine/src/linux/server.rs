@@ -179,6 +179,18 @@ pub async fn route(engine: Arc<Engine>, mut req: Request<Incoming>) -> Result<Re
         (&Method::GET, ["v1", "snapshots"]) => Ok(json(200, &engine.snapshots())),
         (&Method::DELETE, ["v1", "snapshots", id]) => engine.delete_snapshot(id).map(|()| empty(204)),
         (&Method::GET, ["v1", "images"]) => Ok(json(200, &engine.images())),
+        // A reference with a `/` comes percent-encoded, as one segment.
+        (&Method::GET, ["v1", "images", reference]) => engine.held_image(&crate::api::percent_decode(reference)).map(|m| json(200, &m)),
+        (&Method::POST, ["v1", "images", reference, "measure"]) => {
+            let reference = crate::api::percent_decode(reference);
+            match body::<serde_json::Value>(req).await {
+                Ok(v) => match v["nonce"].as_str().and_then(|n| hex::decode(n).ok()).and_then(|n| <[u8; 32]>::try_from(n).ok()) {
+                    Some(nonce) => engine.measure(&reference, nonce).await.map(|m| json(200, &m)),
+                    None => Err(ApiError::Invalid("{\"nonce\": 64 hex digits}".into())),
+                },
+                Err(e) => Err(e),
+            }
+        }
         (&Method::POST, ["v1", "images", "load"]) => {
             let reference = query.split('&').find_map(|q| q.strip_prefix("reference=")).map(crate::api::percent_decode);
             match save_body(&engine, req).await {

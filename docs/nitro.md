@@ -235,6 +235,12 @@ computer running (its VMs live in the old unit's cgroup until then).
 `sandcastle-engine reset --cgroup` ends each `vm-<slot>` (and an old
 engine's `engine/` leaf), never the keeper.
 
+An upgrade that changes the boot (the guest, its kernel, the kernel line's
+words) keeps its running computers, but every image's PCR0 changes with
+it, so each home's next starts wait for new pins ("Measuring an image").
+Measure each image right after such an upgrade, and pin before computers
+are wanted.
+
 ## The bridge
 
 A home (celld and the cell) may run in a confidential sandbox of its own
@@ -314,11 +320,42 @@ the parent carries and can neither read nor use (`crates/session`):
 - **Kept across a home restart.** The home keeps each claim's credential
   in its own state directory (0600), so a computer kept running through a
   home restart is still the home's.
-- **The pins** are the PCR0s of the images a home runs on its node. Each is
-  read once from a computer of the image, as the home's first refusal
-  prints it, and written to the pin file by the operator. A node builds an
-  image's root itself (not byte-reproducible), so a pin is the node's, and
-  that first reading trusts the node (above, "Release assets").
+- **The pins** are the PCR0s of the images a home runs on its node, one
+  per line in the pin file. Each is read from the node's measure of the
+  image (below) and written by the operator. A node builds an image's root
+  itself (not byte-reproducible), so a pin is the node's, and that first
+  reading trusts the node (above, "Release assets"). The home reads the
+  file again at each claim, so a pin added while it runs counts at once.
+- **A start whose image is no pin waits.** Before the engine boots
+  anything, the home asks it for the image's PCR0 on its boot (measured
+  then if it has none). One the pins lack waits for its pin, the file read
+  every 2 s, up to 90 s (within the cell's 120 s wait for a computer's
+  first exec), and goes on once pinned; otherwise it is refused, with no
+  computer booted. A missed pin then costs a wait, not a computer booted
+  only to be refused. The PCR0 the engine gives is a hint: the claim still
+  checks the computer's own document.
+
+## Measuring an image
+
+`POST /v1/images/<reference>/measure` with `{"nonce": "<64 hex>"}` answers
+`{"pcr0": "<96 hex>", "document": "<hex>"}`: the PCR0 this node gives the
+image, and the NSM's document for the caller's nonce that says so. The
+engine boots a small sandbox of the image with no network (1 GiB, one
+measure at a time), reads its guest's document over the session port,
+checks it to AWS's root, and destroys the sandbox. The image's own process
+never starts: a session guest waits for its home's claim first, and none
+comes. Only a node whose computers take the session measures; a full node
+answers 429, as a start would.
+
+`GET /v1/images/<reference>` then shows the image with `pcr0`, until the
+node's boot changes. A boot is everything a PCR0 measures besides the
+image's root: the guest kernel, the initrd (the guest, its mke2fs and
+nft), the kernel line's fixed and node words, and the sandbox's mode. An
+engine release that changes any of them changes every image's PCR0, so it
+shows none until measured again. A reference with a `/` goes as one
+percent-encoded segment. To check a measure without trusting the parent,
+write the document's bytes to a file and run
+`nitro-verify --document <file> --nonce <hex>`.
 
 ## A guest with no door
 

@@ -321,6 +321,16 @@ pub fn attest(
     Ok((session, Credential { guest_key, secret }))
 }
 
+/// A guest's attestation document for `nonce`, and no claim: the hello,
+/// the document, then the connection closed, so the guest stays open to
+/// its home's claim. What an engine reads to learn the PCR0 its node gives
+/// an image (docs/nitro.md, "Measuring an image"); the caller verifies it.
+pub fn document(mut s: UnixStream, nonce: [u8; NONCE_BYTES]) -> Result<Vec<u8>, SessionError> {
+    s.set_read_timeout(Some(HANDSHAKE_WAIT))?;
+    s.write_all(&Hello { kind: Kind::Attest, nonce }.encode())?;
+    read_frame(&mut s)?.ok_or(SessionError::Frame)
+}
+
 /// The home's side of a guest's egress connection: the guest named by the
 /// key after its hello, its claim's secret found by `secret_of`.
 pub fn accept_egress(mut s: UnixStream, secret_of: impl FnOnce(&[u8; KEY_BYTES]) -> Option<[u8; KEY_BYTES]>) -> Result<(Session, [u8; KEY_BYTES]), SessionError> {

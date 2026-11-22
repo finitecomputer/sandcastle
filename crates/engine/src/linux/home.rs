@@ -6,7 +6,10 @@
 //! - a **start** goes to the parent's engine; once the computer runs, the
 //!   home attests it (AWS's root, a fresh nonce, a PCR0 of its pins) and
 //!   claims its session before celld hears the start answered. A computer
-//!   that cannot attest is destroyed and the start fails;
+//!   that cannot attest is destroyed and the start fails. A start whose
+//!   image's PCR0 on this node (the engine's measure) is no pin waits for
+//!   its pin instead, booting nothing, and fails only if none comes in
+//!   time (`wait_pinned`);
 //! - an **exec** runs over a session resumed with the claim's credential,
 //!   the guest's agent at the far end, and so does each `ports.sock`
 //!   connection;
@@ -49,6 +52,8 @@ pub type Up = Arc<dyn Fn() -> io::Result<UnixStream> + Send + Sync>;
 
 /// PCR0s a home accepts, at most.
 pub const PINS_MAX: usize = 64;
+/// The pins file, at most: `PINS_MAX` lines and their comments.
+const PINS_BYTES_MAX: u64 = 64 * 1024;
 /// Computers a home keeps credentials for, at most.
 pub const CREDENTIALS_MAX: usize = 1024;
 const STATE_FILE: &str = "sessions.json";
@@ -64,6 +69,12 @@ const HEAD_BYTES_MAX: usize = 8192;
 const RUNNING_WAIT: Duration = Duration::from_secs(60);
 /// How long an exec waits for the guest's first word.
 const EXEC_START_WAIT: Duration = Duration::from_secs(30);
+/// How long a start whose image this home does not pin waits for its pin:
+/// within the cell's wait for its computer's first exec (120 s), with room
+/// for the boot after it.
+const UNPINNED_WAIT: Duration = Duration::from_secs(90);
+/// How often a waiting start reads the pins again.
+const PINS_LOOK: Duration = Duration::from_secs(2);
 
 type Body = BoxBody<Bytes, hyper::Error>;
 
@@ -79,7 +90,10 @@ fn fail(e: ApiError) -> Response<Body> {
 /// and its computers' egress.
 pub struct Sessions {
     trust: sandcastle_nitro_attest::Trust,
-    pins: BTreeSet<[u8; 48]>,
+    pins: Mutex<Pins>,
+    /// The computers whose starts wait for their image's pin; a destroy
+    /// takes its name out, and its start gives up.
+    held: Mutex<BTreeSet<String>>,
     state: PathBuf,
     credentials: Mutex<BTreeMap<String, Credential>>,
     up: Up,
@@ -87,6 +101,16 @@ pub struct Sessions {
     egress: Mutex<BTreeMap<String, Kept>>,
     node_addrs: Vec<std::net::IpAddr>,
     rt: Arc<tokio::runtime::Runtime>,
+}
+
+/// The pins file and the last pins read from it whole. It is read again
+/// at each claim and each look of a waiting start, so a pin added while
+/// the home runs counts at once; a file that stops reading as pins keeps
+/// the last good ones, said once in the log.
+struct Pins {
+    at: PathBuf,
+    good: BTreeSet<[u8; 48]>,
+    said: Option<String>,
 }
 
 /// One computer's egress: what its start asked for, and the proxy for it.
@@ -106,7 +130,7 @@ impl Sessions {
     /// The pins from `pins` (one PCR0 in hex a line, `#` comments), the
     /// credentials kept in `state` before.
     pub fn open(state: &Path, pins: &Path, up: Up) -> io::Result<Sessions> {
-        let pins = read_pins(&std::fs::read_to_string(pins)?)?;
+        let pins = Pins { at: pins.to_path_buf(), good: read_pins(&std::fs::read_to_string(pins)?)?, said: None };
         std::fs::create_dir_all(state)?;
         let file = state.join(STATE_FILE);
         let credentials = match std::fs::File::open(&file) {
@@ -125,7 +149,8 @@ impl Sessions {
         let rt = Arc::new(tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?);
         let s = Sessions {
             trust: sandcastle_nitro_attest::Trust::aws_nitro_enclaves_root_g1(),
-            pins,
+            pins: Mutex::new(pins),
+            held: Mutex::new(BTreeSet::new()),
             state: state.to_path_buf(),
             credentials: Mutex::new(credentials),
             up,
@@ -143,6 +168,33 @@ impl Sessions {
             }
         }
         Ok(s)
+    }
+
+    /// The pins as the file says now (`Pins`).
+    fn pins(&self) -> BTreeSet<[u8; 48]> {
+        let mut p = self.pins.lock().expect("never poisoned");
+        let read = std::fs::File::open(&p.at).and_then(|f| {
+            let mut text = String::new();
+            f.take(PINS_BYTES_MAX + 1).read_to_string(&mut text)?;
+            if text.len() as u64 > PINS_BYTES_MAX {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, format!("past {PINS_BYTES_MAX} bytes")));
+            }
+            read_pins(&text)
+        });
+        match read {
+            Ok(pins) => {
+                p.good = pins;
+                p.said = None;
+            }
+            Err(e) => {
+                let why = e.to_string();
+                if p.said.as_deref() != Some(why.as_str()) {
+                    eprintln!("sandcastle-bridge: {}: {why}; the last good pins stand", p.at.display());
+                    p.said = Some(why);
+                }
+            }
+        }
+        p.good.clone()
     }
 
     /// The egress a computer's start asks for, run in the home.
@@ -207,7 +259,8 @@ impl Sessions {
         // What the guest waits for before its workload starts: the home's CA,
         // and its egress to the home.
         let config = serde_json::to_vec(&serde_json::json!({ "ca_pem": self.ca.cert_pem(), "egress": true })).expect("serializes");
-        let (session, credential) = sandcastle_session::attest(stream, nonce, secret, &config, |doc| verify(&self.trust, &self.pins, doc, &nonce, now)).map_err(|e| e.to_string())?;
+        let pins = self.pins();
+        let (session, credential) = sandcastle_session::attest(stream, nonce, secret, &config, |doc| verify(&self.trust, &pins, doc, &nonce, now)).map_err(|e| e.to_string())?;
         // The claim's own session carries nothing more.
         drop(session);
         self.keep(name, Some(credential)).map_err(|e| format!("keeping its credential: {e}"))
@@ -377,6 +430,11 @@ async fn route(sessions: Arc<Sessions>, req: Request<Incoming>) -> Result<Respon
                 Ok(r) => r,
                 Err(e) => return Ok(fail(e)),
             };
+            if let Some(image) = &start.image {
+                if let Err(why) = wait_pinned(&sessions, &name, image, UNPINNED_WAIT, PINS_LOOK).await {
+                    return Ok(fail(ApiError::Invalid(why)));
+                }
+            }
             let answer = forward(&sessions, req).await;
             if !answer.status().is_success() {
                 return Ok(answer);
@@ -412,6 +470,7 @@ async fn route(sessions: Arc<Sessions>, req: Request<Incoming>) -> Result<Respon
         }
         (&Method::POST, ["v1", "containers", name, "destroy"]) => {
             let name = name.to_string();
+            sessions.held.lock().expect("never poisoned").remove(&name);
             let answer = forward(&sessions, req).await;
             if answer.status().is_success() {
                 let _ = sessions.forget(&name);
@@ -433,6 +492,86 @@ async fn buffered<T: serde::de::DeserializeOwned>(req: Request<Incoming>) -> Res
         .to_bytes();
     let parsed = serde_json::from_slice(&bytes).map_err(|e| ApiError::Invalid(format!("the body: {e}")))?;
     Ok((Request::from_parts(parts, Full::new(bytes).map_err(|never| match never {}).boxed()), parsed))
+}
+
+/// A start goes on at once when its image's PCR0 on this node is a pin, or
+/// is not known (an engine that measures nothing, a full node: the claim
+/// decides, as before). One the pins lack waits, the pins read again every
+/// `look`, at most `wait`, and is refused then with no computer booted: a
+/// missed pin costs a wait, not a computer booted to be refused, and a pin
+/// added within the wait starts it.
+async fn wait_pinned(sessions: &Arc<Sessions>, name: &str, image: &str, wait: Duration, look: Duration) -> Result<(), String> {
+    let Some(pcr0) = image_pcr0(sessions, image).await else { return Ok(()) };
+    if sessions.pins().contains(&pcr0) {
+        return Ok(());
+    }
+    let shown = hex::encode(pcr0);
+    eprintln!("sandcastle-bridge: {name}: its image's PCR0 {shown} is no pin: waiting up to {} s for it", wait.as_secs());
+    sessions.held.lock().expect("never poisoned").insert(name.to_string());
+    let t0 = std::time::Instant::now();
+    // Bounded by `wait`.
+    let r = loop {
+        tokio::time::sleep(look).await;
+        if sessions.pins().contains(&pcr0) {
+            break Ok(());
+        }
+        if !sessions.held.lock().expect("never poisoned").contains(name) {
+            break Err("destroyed while its start waited for its image's pin".to_string());
+        }
+        if t0.elapsed() >= wait {
+            break Err(format!("PCR0 {shown} is no image this home runs (this node's measure of {image}); no computer was booted"));
+        }
+    };
+    sessions.held.lock().expect("never poisoned").remove(name);
+    match &r {
+        Ok(()) => eprintln!("sandcastle-bridge: {name}: pinned after {} ms; starting", t0.elapsed().as_millis()),
+        Err(why) => eprintln!("sandcastle-bridge: {name}: refused: {why}"),
+    }
+    r
+}
+
+/// The engine's PCR0 for `image` on its boot, measured now if it has none
+/// (one small sandbox, once per image and boot). A hint only: the claim
+/// still checks the computer's own document.
+async fn image_pcr0(sessions: &Sessions, image: &str) -> Option<[u8; 48]> {
+    let at = format!("/v1/images/{}", path_segment(image));
+    let held = call(sessions, Method::GET, &at, None).await.ok()?;
+    let pcr0 = match held["pcr0"].as_str() {
+        Some(p) => p.to_string(),
+        None => {
+            let nonce = hex::encode(random32().ok()?);
+            let measured = call(sessions, Method::POST, &format!("{at}/measure"), Some(serde_json::json!({ "nonce": nonce }))).await.ok()?;
+            measured["pcr0"].as_str()?.to_string()
+        }
+    };
+    hex::decode(pcr0).ok()?.try_into().ok()
+}
+
+/// `s` as one URL path segment: what is not unreserved, percent-encoded.
+fn path_segment(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-._~:@".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
+}
+
+/// One JSON call to the parent's engine; a status that is not a success is
+/// its error.
+async fn call(sessions: &Sessions, method: Method, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, ApiError> {
+    let body = body.map(|b| Bytes::from(serde_json::to_vec(&b).expect("serializes"))).unwrap_or_default();
+    let req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("host", "engine")
+        .header("content-type", "application/json")
+        .body(Full::new(body).map_err(|never| match never {}).boxed())
+        .map_err(|e| ApiError::Invalid(e.to_string()))?;
+    let r = send(sessions, req).await.map_err(ApiError::Internal)?;
+    let ok = r.status().is_success();
+    let body = r.into_body().collect().await.map_err(|e| ApiError::Internal(e.to_string()))?.to_bytes();
+    if !ok {
+        return Err(ApiError::Internal(String::from_utf8_lossy(&body).chars().take(500).collect()));
+    }
+    serde_json::from_slice(&body).map_err(|e| ApiError::Internal(format!("{path}: {e}")))
 }
 
 /// The start's computer running, then claimed.
@@ -628,5 +767,115 @@ mod tests {
         assert!(verify(&aws, &pinned, &doc, &nonce, T0_MS).is_err(), "another root");
         f.public_key = Some(vec![7u8; 294]);
         assert!(verify(&chain.trust(), &pinned, &document(&chain, &f), &nonce, T0_MS).unwrap_err().contains("32 bytes"));
+    }
+
+    /// A parent's engine for a test: each connection answers its one
+    /// request (`answer` of its request line and body), and is closed.
+    fn fake_up(answer: impl Fn(&str, &[u8]) -> (u16, String) + Send + Sync + 'static) -> Up {
+        let answer = Arc::new(answer);
+        Arc::new(move || {
+            let (mine, mut theirs) = UnixStream::pair()?;
+            let answer = answer.clone();
+            std::thread::spawn(move || {
+                let Ok(head) = read_head(&mut theirs) else { return };
+                let length = head.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|n| n.trim().parse::<usize>().unwrap_or(0))).unwrap_or(0);
+                let mut body = vec![0u8; length];
+                if theirs.read_exact(&mut body).is_err() {
+                    return;
+                }
+                let (status, text) = answer(head.lines().next().unwrap_or(""), &body);
+                let _ = write!(theirs, "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}", text.len());
+            });
+            Ok(mine)
+        })
+    }
+
+    fn pin(b: u8) -> String {
+        hex::encode([b; 48])
+    }
+
+    // Goal: a start whose image's PCR0 is no pin waits, boots nothing, and
+    // goes on once the pin is added; one already pinned goes on at once;
+    // one never pinned is refused at the wait's end; a destroy ends a
+    // wait; an image the engine has no PCR0 for is measured once, with a
+    // fresh nonce; an engine that cannot say leaves it to the claim. And
+    // pins that stop reading keep the last good ones.
+    #[test]
+    fn an_unpinned_start_waits_for_its_pin() {
+        let dir = std::env::temp_dir().join(format!("home-pins-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let pins = dir.join("pins");
+        std::fs::write(&pins, format!("{}\n", pin(0xaa))).unwrap();
+        let measures = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = measures.clone();
+        let up = fake_up(move |line, body| match line {
+            l if l.starts_with("GET /v1/images/img ") => (200, format!(r#"{{"reference":"img","pcr0":"{}"}}"#, pin(0xbb))),
+            l if l.starts_with("GET /v1/images/never ") => (200, format!(r#"{{"reference":"never","pcr0":"{}"}}"#, pin(0xcc))),
+            l if l.starts_with("GET /v1/images/fresh%2Fone ") => (200, r#"{"reference":"fresh/one"}"#.to_string()),
+            l if l.starts_with("POST /v1/images/fresh%2Fone/measure ") => {
+                let v: serde_json::Value = serde_json::from_slice(body).unwrap();
+                seen.lock().unwrap().push(v["nonce"].as_str().unwrap().to_string());
+                (200, format!(r#"{{"pcr0":"{}","document":"00"}}"#, pin(0xaa)))
+            }
+            _ => (404, r#"{"error":"no such image","kind":"not_found"}"#.to_string()),
+        });
+        let s = Arc::new(Sessions::open(&dir.join("state"), &pins, up).unwrap());
+        let (wait, look) = (Duration::from_secs(5), Duration::from_millis(50));
+        let rt = s.rt.clone();
+
+        // Pinned while it waits: it goes on, a look or so after the pin.
+        let writer = {
+            let pins = pins.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(400));
+                std::fs::write(&pins, format!("{}\n{}\n", pin(0xaa), pin(0xbb))).unwrap();
+            })
+        };
+        let t0 = std::time::Instant::now();
+        rt.block_on(wait_pinned(&s, "c1", "img", wait, look)).unwrap();
+        writer.join().unwrap();
+        assert!(t0.elapsed() >= Duration::from_millis(400) && t0.elapsed() < Duration::from_secs(3), "{:?}", t0.elapsed());
+        assert!(s.held.lock().unwrap().is_empty());
+
+        // Pinned already: at once.
+        let t0 = std::time::Instant::now();
+        rt.block_on(wait_pinned(&s, "c1", "img", wait, look)).unwrap();
+        assert!(t0.elapsed() < look, "{:?}", t0.elapsed());
+
+        // Never pinned: refused when the wait ends, booting nothing.
+        let t0 = std::time::Instant::now();
+        let why = rt.block_on(wait_pinned(&s, "c2", "never", Duration::from_millis(300), look)).unwrap_err();
+        assert!(why.contains(&pin(0xcc)) && why.contains("no computer was booted"), "{why}");
+        assert!(t0.elapsed() >= Duration::from_millis(300));
+
+        // A destroy while it waits ends the wait.
+        let destroyer = {
+            let s = s.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(200));
+                s.held.lock().unwrap().remove("c3");
+            })
+        };
+        let why = rt.block_on(wait_pinned(&s, "c3", "never", wait, look)).unwrap_err();
+        destroyer.join().unwrap();
+        assert!(why.contains("destroyed"), "{why}");
+
+        // No PCR0 yet: measured, with a fresh nonce each time.
+        rt.block_on(wait_pinned(&s, "c4", "fresh/one", wait, look)).unwrap();
+        rt.block_on(wait_pinned(&s, "c4", "fresh/one", wait, look)).unwrap();
+        let nonces = measures.lock().unwrap().clone();
+        assert_eq!(nonces.len(), 2);
+        assert!(nonces.iter().all(|n| n.len() == 64) && nonces[0] != nonces[1], "{nonces:?}");
+
+        // The engine cannot say (no such image, no route): the claim decides.
+        rt.block_on(wait_pinned(&s, "c5", "unknown", wait, look)).unwrap();
+
+        // Pins that stop reading keep the last good ones.
+        std::fs::write(&pins, "not a pin\n").unwrap();
+        assert!(s.pins().contains(&[0xbb; 48]));
+        std::fs::write(&pins, format!("{}\n", pin(0xcc))).unwrap();
+        assert_eq!(s.pins(), [[0xcc; 48]].into());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
