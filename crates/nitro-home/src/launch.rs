@@ -425,6 +425,82 @@ pub fn up(c: &Conf) -> Result<Option<i32>, Failure> {
     Ok(code)
 }
 
+/// The boot that measures an image (`measure`) takes this long at most:
+/// its attestation is the workload's second line, within a second.
+pub const MEASURE_MS_MAX: u64 = 60_000;
+/// A measuring boot's memory and vCPUs: small, beside the running home
+/// (PCR0 names the kernel, its command line and the initrd, never the
+/// sandbox's size, so a small boot measures the same image).
+pub const MEASURE_MEMORY_MIB: u32 = 1024;
+pub const MEASURE_VCPUS: u32 = 1;
+
+/// The PCR0 (and PCR1, PCR2) of the image `c` names, measured by booting it
+/// once beside a running home: its own CID and directories under `at`, no
+/// NIC, small throwaway disks. The image's start prints its attestation
+/// document (entry.sh's step 2) and then dies at KMS, which it cannot
+/// reach; the document is verified to AWS's Nitro root under a fresh nonce
+/// of the workload's own, and its PCRs answered. The running home, its
+/// disk and its sockets are not touched.
+pub fn measure(c: &Conf, at: &Path, cid: u32) -> Result<serde_json::Value, Failure> {
+    let img = image(c)?;
+    let mut m = c.clone();
+    m.dir = at.join("run");
+    m.vsock_dir = at.join("vsock");
+    m.scratch = at.join("scratch.img");
+    m.data = at.join("data.img");
+    (m.scratch_gib, m.data_gib) = (1, 1);
+    (m.memory_mib, m.vcpus) = (MEASURE_MEMORY_MIB, MEASURE_VCPUS);
+    m.cid = cid;
+    if m.cid == c.cid {
+        return Err(Failure(format!("cid {cid} is the home's own: a measuring boot takes another")));
+    }
+    std::fs::create_dir_all(at).map_err(|e| fail(&at.display().to_string(), e))?;
+    scratch(&m.scratch, m.scratch_gib)?;
+    disk(&m.data, m.data_gib, true)?;
+    let mut sb = sandbox(&m, &img);
+    sb.nics.clear();
+    std::fs::create_dir_all(&m.vsock_dir).map_err(|e| fail("the vsock directory", e))?;
+    for e in std::fs::read_dir(&m.vsock_dir).map_err(|e| fail("the vsock directory", e))?.flatten() {
+        let _ = std::fs::remove_file(e.path());
+    }
+    let start = Start::Run { entrypoint: Proc { argv: c.entrypoint.clone(), env: vec![], cwd: Some("/".into()), user: None }, hostname: "measure".into(), data: false, data_path: None, ca_pem: None, net: None };
+    let t0 = Instant::now();
+    let g = guest::launch(&sb, &parent(), &m.dir, &start)?;
+    let deadline = Instant::now() + Duration::from_millis(MEASURE_MS_MAX);
+    let mut seen: Option<(String, String)> = None;
+    while seen.is_none() && Instant::now() < deadline {
+        match g.said.recv_timeout(Duration::from_millis(200)) {
+            Ok(Said::Line { text, .. }) => seen = attestation_line(&text),
+            Ok(Said::Exited { .. } | Said::Failed { .. } | Said::Closed { .. }) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
+    let boot_ms = t0.elapsed().as_millis() as u64;
+    let _ = g.stop();
+    for f in [&m.scratch, &m.data] {
+        let _ = std::fs::remove_file(f);
+    }
+    let (nonce, document) = seen.ok_or_else(|| Failure(format!("the image printed no attestation within {MEASURE_MS_MAX} ms")))?;
+    let (nonce, document) = (hex::decode(&nonce).map_err(|e| fail("the nonce", e))?, hex::decode(&document).map_err(|e| fail("the document", e))?);
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| fail("the clock", e))?.as_millis() as u64;
+    let trust = sandcastle_nitro_attest::Trust::aws_nitro_enclaves_root_g1();
+    let a = sandcastle_nitro_attest::verify(&trust, &document, &nonce, now_ms).map_err(|e| fail("the measuring boot's document", e))?;
+    let pcr = |i: u8| a.pcr(i).map(hex::encode).unwrap_or_default();
+    // the document itself too, so its reader verifies it on a machine of
+    // its own rather than trusting the parent's verification
+    Ok(serde_json::json!({"pcr0": pcr(0), "pcr1": pcr(1), "pcr2": pcr(2), "boot_ms": boot_ms, "root_hash": img.root_hash, "attestation": format!("attestation nonce={} document={}", hex::encode(&nonce), hex::encode(&document))}))
+}
+
+/// The workload's attestation line (entry.sh's step 2), its nonce and
+/// document, both hex, when `line` is one.
+fn attestation_line(line: &str) -> Option<(String, String)> {
+    let rest = &line[line.find("attestation nonce=")? + "attestation nonce=".len()..];
+    let (nonce, rest) = rest.split_once(' ')?;
+    let document = rest.strip_prefix("document=")?.trim();
+    let hexy = |s: &str| !s.is_empty() && s.len().is_multiple_of(2) && s.bytes().all(|b| b.is_ascii_hexdigit());
+    (hexy(nonce) && hexy(document)).then(|| (nonce.to_string(), document.to_string()))
+}
+
 /// One command in the running home, through sandcastle's agent: leak 2
 /// (docs/nitro-home.md), kept for phase 1's operator.
 pub fn exec(dir: &Path, argv: Vec<String>, env: Vec<String>, stdin: Option<Vec<u8>>) -> Result<serde_json::Value, Failure> {
@@ -449,6 +525,16 @@ mod tests {
             "to_parent": [{"port": 5000, "socket": "/var/lib/sandcastle/engine.sock"}]
         }))
         .unwrap()
+    }
+
+    // Goal: the attestation line is found in the workload's output as
+    // entry.sh prints it, and nothing else passes for one.
+    #[test]
+    fn attestation_lines_are_read() {
+        assert_eq!(attestation_line("home: attestation nonce=0a0b document=a1b2c3"), Some(("0a0b".into(), "a1b2c3".into())));
+        for bad in ["home: started", "home: attestation nonce=0a0b", "home: attestation nonce=zz document=a1b2", "home: attestation nonce=0a0b document=abc"] {
+            assert_eq!(attestation_line(bad), None, "{bad}");
+        }
     }
 
     // Goal: a conf holds to its rules: a plain tap, a guest CID, one /24's

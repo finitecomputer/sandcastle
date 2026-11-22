@@ -32,7 +32,15 @@ fn run(args: &[String]) -> Result<i32, String> {
             println!("{out}");
             Ok(out["code"].as_i64().unwrap_or(1) as i32)
         }
-        _ => Err("usage: nitro-home up --conf <file> | exec --dir <dir> [--env K=V]… -- <argv>…".into()),
+        Some("measure") => {
+            let conf = launch::Conf::load(std::path::Path::new(&flag("--conf").ok_or("--conf")?)).map_err(|e| e.0)?;
+            let at = flag("--at").unwrap_or_else(|| "/run/nitro-home/measure".into());
+            let cid: u32 = flag("--cid").unwrap_or_else(|| "901".into()).parse().map_err(|_| "--cid is a number")?;
+            let out = launch::measure(&conf, std::path::Path::new(&at), cid).map_err(|e| e.0)?;
+            println!("{out}");
+            Ok(0)
+        }
+        _ => Err("usage: nitro-home up --conf <file> | measure --conf <file> [--at <dir>] [--cid <n>] | exec --dir <dir> [--env K=V]… -- <argv>…".into()),
     }
 }
 

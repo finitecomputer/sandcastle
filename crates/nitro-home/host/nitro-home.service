@@ -12,7 +12,8 @@ After=network-online.target sandcastle-engine.service
 Wants=network-online.target sandcastle-engine.service
 
 [Service]
-ExecStart=/usr/local/bin/nitro-home up --conf /etc/nitro-home/home.json
+# whichever staged slot `current` names (home-stage.sh, home-switch.sh)
+ExecStart=/var/lib/nitro-home/current/nitro-home up --conf /var/lib/nitro-home/current/home.json
 Restart=always
 RestartSec=5
 KillMode=mixed

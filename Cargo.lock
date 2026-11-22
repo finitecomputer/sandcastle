@@ -1005,6 +1005,7 @@ dependencies = [
  "hex",
  "libc",
  "ring",
+ "sandcastle-nitro-attest",
  "sandcastle-nitro-spike",
  "sandcastle-vm",
  "sandcastle-wire",
