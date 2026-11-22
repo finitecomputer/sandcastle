@@ -21,7 +21,9 @@
 #     measure`), its document verified here, and its PCR0 pinned in the
 #     key's policy, the running image's kept for a rollback;
 #  5. the home switches onto it (home-switch.sh): a graceful restart, its
-#     health checked, and back onto the slot before by itself on failure.
+#     health checked, and back onto the slot before by itself on failure;
+#     never while its sealed journal has a hole after its newest snapshot
+#     (home-journal-check.py, which a start would refuse: exit 3).
 #
 # `--pin` adds a computer image's PCR0 to the home's pins first.
 # `--rollback` moves the home back onto the slot before (its PCR0 is the
@@ -53,7 +55,18 @@ t0=$(date +%s)
 mkdir -p "$HOME/.cache/nitro-real/locks"
 exec 9> "$HOME/.cache/nitro-real/locks/$P.lock"
 flock 9 || { say "the parent's lock"; exit 1; }
+# Before any restart: a home whose sealed journal has a hole after its
+# newest snapshot would refuse to start (celld#30; celld#31 stops new ones).
+# Its running celld still holds the index, and its next snapshot puts the
+# hole behind it, so the restart waits until then.
+journal_ok() {
+    "$SC/crates/nitro-home/host/home-journal-check.py" "$H/launcher.json" >&2 || {
+        say "not restarting the home: its journal must have no hole after its newest snapshot (home-journal-check.py); try again after its next snapshot"
+        exit 3
+    }
+}
 if [ "${1:-}" = "--rollback" ]; then
+    journal_ok
     ssh $S "$P" "sudo bash $host/home-switch.sh $named --rollback"
     exit
 fi
@@ -115,7 +128,9 @@ else
     [ -n "$running" ] || { say "the running slot $running_slot has no PCR0 verified here (attest/slots.tsv): refusing to drop it from the policy"; exit 1; }
 fi
 PATH="$SC/target/release:$PATH" "$SC/crates/nitro-home/host/pin-pcr0.sh" "$H/attest/measure-$slot.log" "$(cat "$H/kms/key-id")" "$H/kms/policy.json" --keep "$running" >&2
-# 5. switched onto, its health checked, back by itself on failure
+# 5. switched onto, its health checked, back by itself on failure, once its
+# journal lets it start again
+journal_ok
 say "switching"
 ssh $S "$P" "sudo bash $host/home-switch.sh $named $slot"
 say "done in $(( $(date +%s) - t0 )) s"

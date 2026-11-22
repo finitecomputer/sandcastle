@@ -31,10 +31,12 @@ here=$(dirname "$(realpath "$0")")
 # deploy saves no image named by its content key), and lane A's
 # nitro/keep-computers (a restart that asks keeps the computers running),
 # nitro/preserve-admits-resident (a charge sent during a preserve stop is
-# delivered) and nitro/sealed-bucket (the fleet bucket sealed);
+# delivered), nitro/sealed-bucket (the fleet bucket sealed) and
+# nitro/sealed-journal-no-hole (celld#31: a commit whose caller goes away
+# leaves no hole in the sealed journal);
 # macrofiche: its main; fragment: the tree given (its sha recorded).
 CELLD_REPO=https://github.com/futurepaul/celld
-CELLD_SHA=94b5294fab182630f98c139cda5246c5565cb7da
+CELLD_SHA=c650dec0e65a3a6326c48ec1e3c157c166a0acc6
 MACROFICHE_REPO=https://github.com/futurepaul/macrofiche
 MACROFICHE_SHA=a18dc98e9e3abbec769344772edd72e933c396d6
 # sandcastle-bridge, the home's half of the container engine's vsock bridge
