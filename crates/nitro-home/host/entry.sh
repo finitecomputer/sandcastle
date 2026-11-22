@@ -203,7 +203,7 @@ if [ "$(cat $STATE/deployed 2>/dev/null || true)" != "$release" ]; then
     say "deployed $release in $(ms_since "$d0") ms"
 fi
 CELLD_WATCH=$STATE/celld CELLD_NODE=home CELLD_SECRETS_FILE=$R/celld-secrets.json CELLD_CONTAINER_ENGINE=$engine \
-CELLD_TRUST_FORWARDED_HEADERS=1 CELLD_DURABILITY=bucket CELLD_SHUTDOWN_TOTAL_MS=5000 \
+CELLD_TRUST_FORWARDED_HEADERS=1 CELLD_DURABILITY=bucket CELLD_SHUTDOWN_TOTAL_MS=40000 \
 CELLD_FACET_MAX_BYTES=20971520 CELLD_DYNAMIC_LOCKDOWN=1 CELLD_MAX_CELL_REQUESTS=512 \
     /usr/local/bin/celld --no-control-plane --listen 127.0.0.1:8080 --internal-listen 127.0.0.1:8081 --region "$HOME_REGION" \
     > >(tee -a $LOG/celld.log | grep --line-buffered -E " (WARN|ERROR) |listening|panicked|^Error|^Caused by|^ +[0-9]+: ") 2>&1 &

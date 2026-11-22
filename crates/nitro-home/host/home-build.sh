@@ -33,10 +33,11 @@ here=$(dirname "$(realpath "$0")")
 # nitro/preserve-admits-resident (a charge sent during a preserve stop is
 # delivered), nitro/sealed-bucket (the fleet bucket sealed) and
 # nitro/sealed-journal-no-hole (celld#31: a commit whose caller goes away
-# leaves no hole in the sealed journal);
+# leaves no hole in the sealed journal) and nitro/sealed-adopt-own-writes
+# (celld#32: a write or delete a stop cut short is adopted, not refused);
 # macrofiche: its main; fragment: the tree given (its sha recorded).
 CELLD_REPO=https://github.com/futurepaul/celld
-CELLD_SHA=c650dec0e65a3a6326c48ec1e3c157c166a0acc6
+CELLD_SHA=ee56eafd79a22c696c0626d123a6e54152925b24
 MACROFICHE_REPO=https://github.com/futurepaul/macrofiche
 MACROFICHE_SHA=a18dc98e9e3abbec769344772edd72e933c396d6
 # sandcastle-bridge, the home's half of the container engine's vsock bridge
