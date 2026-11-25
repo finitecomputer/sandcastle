@@ -4,8 +4,8 @@
 //! globally, so libkrun's own `dlopen("libkrunfw.so.5")` finds it by its
 //! soname instead of searching the system.
 //!
-//! Pinned: libkrun c9327bda (Apache-2.0), libkrunfw a9320d97 (v5.6.3,
-//! LGPL-2.1, its kernel GPL-2.0), docs/krun-spike.md, Dependencies. The
+//! Pinned: libkrun 715c1c98 (Apache-2.0), libkrunfw b31ee303 (v5.6.4,
+//! LGPL-2.1, its kernel GPL-2.0), docs/krun-engine.md, Dependencies. The
 //! layouts below are libkrun.h's at that commit (ffier 0.3).
 
 use std::ffi::{c_char, c_int, c_void, CString};
@@ -130,10 +130,7 @@ functions! {
     krun_vmm_builder_payload: fn(*mut Handle, Handle);
     krun_vmm_builder_devices: fn(*mut Handle, Handle);
     krun_vmm_builder_build: fn(*mut Handle, *mut ErrOut) -> Handle;
-    krun_vmm_handle: fn(Handle, *mut ErrOut) -> Handle;
     krun_vmm_run: fn(Handle);
-    krun_vmm_handle_pause: fn(Handle, *mut ErrOut) -> u64;
-    krun_vmm_handle_resume: fn(Handle, *mut ErrOut) -> u64;
     krun_error_message: fn(ErrOut, *const VtableHandle);
     krun_error_destroy: fn(ErrOut);
 }
@@ -144,12 +141,6 @@ pub struct Krun {
 
 /// A built VMM, run once.
 pub struct Vmm(Handle);
-
-/// libkrun's thread-safe handle for pause and resume ("The handle can be
-/// moved to another thread for pause/resume", libkrun.h).
-pub struct VmmHandle(Handle);
-unsafe impl Send for VmmHandle {}
-unsafe impl Sync for VmmHandle {}
 
 extern "C" fn push_to_string(user: *mut c_void, s: KrunStr) -> bool {
     // SAFETY: `user` is the `&mut String` `message` passes for this call
@@ -237,7 +228,7 @@ impl Krun {
     /// Builds the VMM `config` describes. `console` takes the guest's
     /// console (its kernel log and our init's), `null` is its stdin; both
     /// stay open for the life of the process.
-    pub fn build(&self, config: &VmConfig, console: RawFd, null: RawFd) -> Result<(Vmm, VmmHandle), KrunError> {
+    pub fn build(&self, config: &VmConfig, console: RawFd, null: RawFd) -> Result<Vmm, KrunError> {
         assert!(config.validate().is_ok(), "the runner validates before it builds");
         let f = &self.fns;
         let mut err: ErrOut = std::ptr::null_mut();
@@ -312,8 +303,7 @@ impl Krun {
             (f.krun_vmm_builder_payload)(&mut builder, payload);
             (f.krun_vmm_builder_devices)(&mut builder, devices);
             let vmm = self.made("krun_vmm_builder_build", (f.krun_vmm_builder_build)(&mut builder, &mut err), err)?;
-            let handle = self.made("krun_vmm_handle", (f.krun_vmm_handle)(vmm, &mut err), err)?;
-            Ok((Vmm(vmm), VmmHandle(handle)))
+            Ok(Vmm(vmm))
         }
     }
 
@@ -323,19 +313,5 @@ impl Krun {
         // SAFETY: a VMM built by `build`, run once (it is moved in).
         unsafe { (self.fns.krun_vmm_run)(vmm.0) };
         unreachable!("krun_vmm_run returned");
-    }
-
-    pub fn pause(&self, h: &VmmHandle) -> Result<(), KrunError> {
-        let mut err: ErrOut = std::ptr::null_mut();
-        // SAFETY: a live handle from `build`; libkrun allows it on any thread.
-        let r = unsafe { (self.fns.krun_vmm_handle_pause)(h.0, &mut err) };
-        self.check("krun_vmm_handle_pause", r, err)
-    }
-
-    pub fn resume(&self, h: &VmmHandle) -> Result<(), KrunError> {
-        let mut err: ErrOut = std::ptr::null_mut();
-        // SAFETY: as for `pause`.
-        let r = unsafe { (self.fns.krun_vmm_handle_resume)(h.0, &mut err) };
-        self.check("krun_vmm_handle_resume", r, err)
     }
 }

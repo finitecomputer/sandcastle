@@ -14,8 +14,6 @@ pub const MEMORY_MIB_MIN: u32 = 128;
 pub const MEMORY_MIB_MAX: u32 = 16 * 1024;
 /// A boot that has not said ready by now has failed.
 pub const BOOT_MS_MAX: u64 = 60_000;
-/// A paused VM that takes longer than this to resume has failed.
-pub const RESUME_MS_MAX: u64 = 1_000;
 pub const PATH_BYTES_MAX: usize = 256;
 /// A unix socket's path, without its NUL (`sun_path` is 108 bytes).
 pub const SOCKET_PATH_BYTES_MAX: usize = 107;

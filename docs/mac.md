@@ -100,9 +100,9 @@ All in the VM, natively (aarch64). Rust, pinned (rustup-init 1.29.1 and
 its published SHA-256; the toolchain the box uses, 1.99.0):
 
 ```sh
-curl -fsSLo /tmp/rustup-init https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-gnu/rustup-init
-echo "15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433  /tmp/rustup-init" | sha256sum -c
-chmod +x /tmp/rustup-init
+curl -fsSLo /tmp/rustup-init https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-gnu/rustup-init &&
+echo "15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433  /tmp/rustup-init" | sha256sum -c &&
+chmod +x /tmp/rustup-init &&
 /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain 1.99.0 --target aarch64-unknown-linux-musl
 . ~/.cargo/env
 ```
@@ -111,8 +111,8 @@ sandcastle (the engine, runner, node and driver, glibc; the guest,
 static musl):
 
 ```sh
-git clone -b arm64 https://github.com/futurepaul/sandcastle ~/src/sandcastle
-cd ~/src/sandcastle
+git clone https://github.com/finitecomputer/sandcastle ~/src/sandcastle &&
+cd ~/src/sandcastle && git checkout 6870af9ffb2ffe202d85657bf953fa150c568a00 &&   # its gate matches the libkrun below
 cargo build --release --locked -p sandcastle-engine -p sandcastle-vm -p sandcastle-node -p sandcastle-krun-spike
 cargo build --release --locked -p sandcastle-guest --target aarch64-unknown-linux-musl
 ```
@@ -121,37 +121,20 @@ libkrun, at the commit the box runs:
 
 ```sh
 git clone https://github.com/containers/libkrun ~/src/libkrun
-cd ~/src/libkrun && git checkout c9327bda52ee0c93d803ee12f409fc6b52c52fab
+cd ~/src/libkrun && git checkout 715c1c9857576c7a1e2057abcaf4a782ba527f97
 cargo build --release --locked -p libkrun --features ffi,blk,net
 ```
 
-libkrun moved from b63baa1 on 2026-11-11 (docs/krun-engine.md,
-Dependencies); its vtable layout changed, so the gate in
-`crates/vm/src/linux/krun.rs` needs that commit or later. The Linux box
-runs libkrunfw v5.6.3 (Linux 6.12.115), built from source; v5.6.3 has no
-release build yet, so on a Mac either build it from source, its kernel
-seeded and checked first (the Makefile's own download is unchecked):
+libkrun moved from c9327bda on 2026-11-24 (docs/krun-engine.md,
+Dependencies); the gate in `crates/vm/src/linux/krun.rs` needs c9327bda
+or later (its vtable layout). libkrunfw is v5.6.4 (Linux 6.12.115).
+Upstream's own aarch64 release build of it, checked against GitHub's
+published digest, needs no versioned glibc symbols and no other library,
+so any aarch64 distribution loads it:
 
 ```sh
-sudo apt-get install -y bc bison flex libelf-dev elfutils python3-pyelftools cpio xz-utils patch
-git clone https://github.com/libkrun/libkrunfw ~/src/libkrunfw-src && cd ~/src/libkrunfw-src && git checkout v5.6.3
-mkdir -p tarballs && curl -fL -o tarballs/v5.6.3-6.12.115.tar.gz https://github.com/libkrun/linux/archive/refs/tags/v5.6.3-6.12.115.tar.gz
-echo "62841e8af1a0e6630c12dd2f36d4f2bd352b32715780308bd9c364a8e1fd4ede  tarballs/v5.6.3-6.12.115.tar.gz" | sha256sum -c
-make -j"$(nproc)" && make PREFIX="$HOME/src/libkrunfw/usr" install
-```
-
-or keep 5.6.2:
-
-libkrunfw 5.6.2 (the guest's kernel, Linux 6.12.109), upstream's own
-aarch64 release build, checked against GitHub's published digest. Its
-tag, `v5.6.2` (`f14ac64c`), is three commits before the README's
-`f6a710fa`, which adds only an x86 config change and three virtio-gpu
-patches (sandcastle has no GPU); nothing was released from it. It needs no versioned glibc symbols, so any aarch64
-distribution loads it:
-
-```sh
-curl -fsSLo /tmp/libkrunfw-aarch64.tgz https://github.com/libkrun/libkrunfw/releases/download/v5.6.2/libkrunfw-aarch64.tgz
-echo "dea7905a167eee17d482200ea2fe15871aceb293b0674ac825ed7ae69759399f  /tmp/libkrunfw-aarch64.tgz" | sha256sum -c
+curl -fsSLo /tmp/libkrunfw-aarch64.tgz https://github.com/libkrun/libkrunfw/releases/download/v5.6.4/libkrunfw-aarch64.tgz &&
+echo "c031d9b582b766b921701e2427c0feb318e63c38207796ef196b613f311de98e  /tmp/libkrunfw-aarch64.tgz" | sha256sum -c &&
 mkdir -p ~/src/libkrunfw && tar -xzf /tmp/libkrunfw-aarch64.tgz -C ~/src/libkrunfw
 ```
 
@@ -160,9 +143,9 @@ the kernel with no checksum, so seed it first):
 
 ```sh
 sudo apt-get install -y bc bison flex libelf-dev elfutils python3-pyelftools cpio xz-utils patch
-git clone https://github.com/libkrun/libkrunfw ~/src/libkrunfw-src && cd ~/src/libkrunfw-src && git checkout v5.6.2
-mkdir -p tarballs && curl -fL -o tarballs/linux-6.12.109.tar.xz https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.109.tar.xz
-echo "5484e552a334e15019f4aeba89e5b58f04651cf2f4e24e04de9f152f1c38e3fa  tarballs/linux-6.12.109.tar.xz" | sha256sum -c
+git clone https://github.com/libkrun/libkrunfw ~/src/libkrunfw-src && cd ~/src/libkrunfw-src && git checkout v5.6.4 &&
+mkdir -p tarballs && curl -fL -o tarballs/v5.6.4-6.12.115.tar.gz https://github.com/libkrun/linux/archive/refs/tags/v5.6.4-6.12.115.tar.gz &&
+echo "050fcea96b607e49f135f270472bc95346c172c9d6df5f9256aeb6f7972675d5  tarballs/v5.6.4-6.12.115.tar.gz" | sha256sum -c &&
 make -j"$(nproc)" && make PREFIX="$HOME/src/libkrunfw/usr" install
 ```
 
@@ -404,7 +387,7 @@ unprivileged) emulated an aarch64 machine with EL2 (`-machine
 virt,virtualization=on,gic-version=3 -cpu max`, TCG). Its guest, the same
 Debian 13 image, booted at EL2 ("kvm [1]: VHE mode initialized
 successfully", kernel 6.12.111) and had `/dev/kvm`. Inside it, the
-binaries cross-built with zig, libkrun b63baa1 and libkrunfw 5.6.2 above:
+binaries cross-built with zig, libkrun b63baa1 and libkrunfw 5.6.2 (the pins then):
 
 | | |
 |---|---|

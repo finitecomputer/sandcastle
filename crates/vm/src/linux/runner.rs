@@ -21,8 +21,8 @@ use sandcastle_wire::{
 use serde_json::json;
 use thiserror::Error;
 
-use super::krun::{Krun, KrunError, VmmHandle};
-use crate::config::{ConfigError, VmConfig, BOOT_MS_MAX, RESUME_MS_MAX};
+use super::krun::{Krun, KrunError};
+use crate::config::{ConfigError, VmConfig, BOOT_MS_MAX};
 use crate::lifecycle::{Event, Lifecycle, State};
 use crate::paths;
 
@@ -116,7 +116,7 @@ pub fn run(config_path: &Path) -> Result<std::convert::Infallible, RunError> {
 
     let krun = Arc::new(Krun::load(&config.libkrunfw, &config.libkrun)?);
     krun.init_log(2)?;
-    let (vmm, handle) = krun.build(&config, console.as_raw_fd(), null.as_raw_fd())?;
+    let vmm = krun.build(&config, console.as_raw_fd(), null.as_raw_fd())?;
     let lifecycle = Arc::new(Mutex::new(Lifecycle::new()));
     lifecycle.lock().expect("not yet shared").step(Event::Launched).expect("a new lifecycle launches");
     events.emit(json!({"event": "launched", "id": config.id, "build_us": t0.elapsed().as_micros() as u64}));
@@ -129,10 +129,10 @@ pub fn run(config_path: &Path) -> Result<std::convert::Infallible, RunError> {
             .map_err(io("spawning the lifecycle thread"))?;
     }
     {
-        let (lifecycle, events, krun) = (lifecycle.clone(), events.clone(), krun.clone());
+        let (lifecycle, events) = (lifecycle.clone(), events.clone());
         std::thread::Builder::new()
             .name("control".into())
-            .spawn(move || serve_control(control_listener, &lifecycle, &events, &krun, &handle))
+            .spawn(move || serve_control(control_listener, &lifecycle, &events))
             .map_err(io("spawning the control thread"))?;
     }
     {
@@ -284,14 +284,20 @@ fn lifecycle_session(
     }
 }
 
-fn serve_control(listener: UnixListener, lifecycle: &Mutex<Lifecycle>, events: &Events, krun: &Krun, handle: &VmmHandle) {
+/// Pause and resume are off. libkrun answers either once it has queued
+/// it, not done it, so the runner could not say when the guest stopped or
+/// ran again, and an exit in between would be refused and lost. They stay
+/// off until a completion can be acknowledged (docs/krun-engine.md,
+/// Dependencies, 2026-11-24); nothing asks for them.
+const PAUSE_OFF: &str = "pause and resume are off: libkrun cannot confirm one";
+
+fn serve_control(listener: UnixListener, lifecycle: &Mutex<Lifecycle>, events: &Events) {
     // Unbounded by design: the control socket serves for the VM's life,
     // one request per connection.
     for conn in listener.incoming() {
         let Ok(stream) = conn else { continue };
         let reply = match control_request(&stream) {
-            Ok(ControlRequest::Pause) => pause(lifecycle, events, krun, handle),
-            Ok(ControlRequest::Resume) => resume(lifecycle, events, krun, handle),
+            Ok(ControlRequest::Pause | ControlRequest::Resume) => ControlReply::Error { message: PAUSE_OFF.into() },
             Ok(ControlRequest::Kill) => {
                 events.emit(json!({"event": "killed"}));
                 // The runner is its PID namespace's PID 1, which ignores a
@@ -316,35 +322,35 @@ fn control_request(stream: &UnixStream) -> Result<ControlRequest, WireError> {
     FrameReader::new(stream).read_message()
 }
 
-fn pause(lifecycle: &Mutex<Lifecycle>, events: &Events, krun: &Krun, handle: &VmmHandle) -> ControlReply {
-    let mut l = lifecycle.lock().expect("lock");
-    if let Err(e) = l.may_pause() {
-        return ControlReply::Error { message: e.to_string() };
-    }
-    let t = Instant::now();
-    if let Err(e) = krun.pause(handle) {
-        return ControlReply::Error { message: e.to_string() };
-    }
-    let micros = t.elapsed().as_micros() as u64;
-    l.step(Event::Paused).expect("may_pause said so");
-    events.emit(json!({"event": "paused", "micros": micros}));
-    ControlReply::Done { micros }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::Vm;
 
-fn resume(lifecycle: &Mutex<Lifecycle>, events: &Events, krun: &Krun, handle: &VmmHandle) -> ControlReply {
-    let mut l = lifecycle.lock().expect("lock");
-    if let Err(e) = l.may_resume() {
-        return ControlReply::Error { message: e.to_string() };
+    // Goal: a ready VM's runner refuses a pause and a resume, and its
+    // state stays ready (libkrun would only queue them). Method: the
+    // control thread on a socket of its own; the client's control call.
+    #[test]
+    fn pause_and_resume_are_refused() {
+        let dir = std::env::temp_dir().join(format!("sc-control-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = bind(&dir.join(paths::CONTROL_SOCK)).unwrap();
+        let mut l = Lifecycle::new();
+        for e in [Event::Launched, Event::Hello, Event::Ready] {
+            l.step(e).unwrap();
+        }
+        let lifecycle = Arc::new(Mutex::new(l));
+        let events = Events { t0: Instant::now(), out: Arc::new(Mutex::new((std::io::stdout(), None))), run_dir: dir.clone() };
+        let served = lifecycle.clone();
+        std::thread::spawn(move || serve_control(listener, &served, &events));
+        let vm = Vm::new(&dir);
+        for req in [ControlRequest::Pause, ControlRequest::Resume] {
+            match vm.control(&req).unwrap() {
+                ControlReply::Error { message } => assert_eq!(message, PAUSE_OFF),
+                other => panic!("{req:?}: {other:?}"),
+            }
+        }
+        assert_eq!(lifecycle.lock().unwrap().state(), State::Ready);
+        let _ = std::fs::remove_dir_all(&dir);
     }
-    let t = Instant::now();
-    if let Err(e) = krun.resume(handle) {
-        return ControlReply::Error { message: e.to_string() };
-    }
-    let micros = t.elapsed().as_micros() as u64;
-    l.step(Event::Resumed).expect("may_resume said so");
-    if micros > RESUME_MS_MAX * 1000 {
-        events.emit(json!({"event": "slow_resume", "micros": micros, "resume_ms_max": RESUME_MS_MAX}));
-    }
-    events.emit(json!({"event": "resumed", "micros": micros}));
-    ControlReply::Done { micros }
 }

@@ -1,0 +1,16 @@
+diff -r linux-5.6.3-6.12.115/net/vmw_vsock/af_vsock.c linux-5.6.4-6.12.115/net/vmw_vsock/af_vsock.c
+373,375c373,376
+<  * its source matches the stored peer. Loopback packets are generated
+<  * internally and always use the local CID as their source, including
+<  * connections using a valid CID alias.
+---
+>  * its source matches the stored peer. Unconnected datagram sockets accept
+>  * packets from any source on their assigned transport. Loopback packets are
+>  * generated internally and always use the local CID as their source,
+>  * including connections using a valid CID alias.
+386a388,392
+> 
+> 	/* Datagram sockets without a peer can receive from any source. */
+> 	if (sk_vsock(vsk)->sk_type == SOCK_DGRAM &&
+> 	    !vsock_addr_bound(&vsk->remote_addr))
+> 		return true;

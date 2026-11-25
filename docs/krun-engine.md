@@ -698,6 +698,73 @@ its disks), on the box's runner, libkrun and libkrunfw (6.12.115):
   box's engine runs root-owned binaries, and installing a guest there needs
   sudo. The jail changes the VM's uid and seccomp, not its memory.
 
+### Dependencies, 2026-11-24
+
+From the weekly upkeep audit. Evidence:
+`krun-engine-evidence/deps-2026-11-24/`. Those VMs ran unjailed, with no
+engine, before the runner refused pause and resume. The box's engine still runs the 2026-11-11 libraries until it is
+installed again (README, Running it on a KVM host).
+
+**libkrun** `c9327bda` -> `715c1c98` (main, 2026-11-23, 37 commits).
+None of them fixes something sandcastle reaches: TSI is off, and the
+Windows, macOS, riscv64 and GPU commits are other platforms' or devices'.
+
+- **The gate dropped pause, resume and the VMM handle** (25 functions
+  loaded, 28 before). `libkrun.h` gained 62 lines and lost none. Each of
+  the 25 is declared the same and exported by the new build. The PushStr vtable, the vtable handle and the
+  enum constants it uses are the same. `libkrun_init.h` (the control
+  socket, not loaded here) lost 2 lines.
+- **The guest's clock moved from `tsc` to `kvm-clock`.** Invariant TSC
+  exposure became opt-in (1156ba7f, `krun_vmm_builder_invariant_tsc`).
+  The guest no longer sees `constant_tsc` or `nonstop_tsc`, so Linux keeps
+  the paravirtual clock. Upstream chose this default, and the gate does not
+  opt in.
+- **Pause and resume stay off.** libkrun now does them on Linux
+  (b487e3a6, cb0721cc), but its answer only says the request was queued.
+  The runner cannot tell when the guest stopped or ran again. An exit
+  arriving in between would be refused and lost, and a failed resume would
+  still read as ready. So the runner refuses both, as libkrun did before
+  ("feature not enabled in this build"), and the gate no longer loads them.
+  They stay off until a completion can be acknowledged. Nothing asks for a
+  pause. In the unjailed run, the guest's clock was held while it was
+  paused (a 3 s pause moved `/proc/uptime` by 0.01 s).
+- **Transparent huge pages** for guest memory are an opt-in
+  (`krun_vmm_builder_transparent_huge_pages`, abe0a0f6). Off by default,
+  they change nothing here. Memory in use, idle and after 1 GiB freed, was
+  in the same band before and after (table below). The VMM's huge pages
+  vary from run to run with either build, as the host's THP is `always`.
+- **Not used here:** the host control socket and the init-side control
+  server (`libkrun_init`), the virtio-fs cache timeouts, and MSI-X.
+- **`cargo audit` on its lock:** no vulnerabilities. Of its 5 warnings
+  (bincode is new: unmaintained), only `chacha20` 0.10.0 (yanked) is in the
+  `ffi,blk,net` build, as before.
+
+**libkrunfw** `a9320d97` (v5.6.3) -> `b31ee303` (v5.6.4), both Linux
+6.12.115.
+
+- libkrunfw's tag changes only its version, and with it the kernel tag it
+  fetches.
+- libkrun/linux's `v5.6.4-6.12.115` against `v5.6.3-6.12.115` differs in
+  one change (`kernel-v5.6.3-to-v5.6.4.diff`): unconnected vsock datagram
+  sockets accept packets from any source. sandcastle's vsock is streams.
+- The tarball's SHA-256 (`050fcea9...`, in README) was the same on two
+  downloads.
+- The aarch64 release build (docs/mac.md) needs no versioned glibc symbol.
+
+**Rust crates:** `url` 2.5.8 -> 2.5.9 (RUSTSEC-2026-0592: a stack
+overflow in `Url::origin()` on nested `blob:` URLs; nothing here calls
+it), and with it `form_urlencoded` 1.2.3. `cargo audit`: 1 vulnerability
+before, none after.
+
+| Unjailed, 2 vCPUs, 2 GiB, busybox (2 runs each) | Before | After |
+|---|---|---|
+| guest uptime at ready | 126, 101 ms | 80, 103 ms |
+| clocksource | tsc | kvm-clock |
+| memory in use, idle +20 s | 111, 95 MiB | 84, 107 MiB |
+| 1 GiB held in the guest | 1143, 1130 MiB | 1118, 1140 MiB |
+| 45 s after it is freed | 133, 118 MiB | 106, 125 MiB |
+| runner `pause` (libkrun's) | refused: not enabled | queued; the runner now refuses it |
+
 ### Debt
 
 This list is the engine's ledger: each stays here until it is paid.
