@@ -100,9 +100,9 @@ All in the VM, natively (aarch64). Rust, pinned (rustup-init 1.29.1 and
 its published SHA-256; the toolchain the box uses, 1.99.0):
 
 ```sh
-curl -fsSLo /tmp/rustup-init https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-gnu/rustup-init
-echo "15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433  /tmp/rustup-init" | sha256sum -c
-chmod +x /tmp/rustup-init
+curl -fsSLo /tmp/rustup-init https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-gnu/rustup-init &&
+echo "15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433  /tmp/rustup-init" | sha256sum -c &&
+chmod +x /tmp/rustup-init &&
 /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain 1.99.0 --target aarch64-unknown-linux-musl
 . ~/.cargo/env
 ```
@@ -111,8 +111,8 @@ sandcastle (the engine, runner, node and driver, glibc; the guest,
 static musl):
 
 ```sh
-git clone -b arm64 https://github.com/futurepaul/sandcastle ~/src/sandcastle
-cd ~/src/sandcastle
+git clone https://github.com/finitecomputer/sandcastle ~/src/sandcastle &&
+cd ~/src/sandcastle && git checkout 6870af9ffb2ffe202d85657bf953fa150c568a00 &&   # its gate matches the libkrun below
 cargo build --release --locked -p sandcastle-engine -p sandcastle-vm -p sandcastle-node -p sandcastle-krun-spike
 cargo build --release --locked -p sandcastle-guest --target aarch64-unknown-linux-musl
 ```
@@ -133,8 +133,8 @@ published digest, needs no versioned glibc symbols and no other library,
 so any aarch64 distribution loads it:
 
 ```sh
-curl -fsSLo /tmp/libkrunfw-aarch64.tgz https://github.com/libkrun/libkrunfw/releases/download/v5.6.4/libkrunfw-aarch64.tgz
-echo "c031d9b582b766b921701e2427c0feb318e63c38207796ef196b613f311de98e  /tmp/libkrunfw-aarch64.tgz" | sha256sum -c
+curl -fsSLo /tmp/libkrunfw-aarch64.tgz https://github.com/libkrun/libkrunfw/releases/download/v5.6.4/libkrunfw-aarch64.tgz &&
+echo "c031d9b582b766b921701e2427c0feb318e63c38207796ef196b613f311de98e  /tmp/libkrunfw-aarch64.tgz" | sha256sum -c &&
 mkdir -p ~/src/libkrunfw && tar -xzf /tmp/libkrunfw-aarch64.tgz -C ~/src/libkrunfw
 ```
 
@@ -143,9 +143,9 @@ the kernel with no checksum, so seed it first):
 
 ```sh
 sudo apt-get install -y bc bison flex libelf-dev elfutils python3-pyelftools cpio xz-utils patch
-git clone https://github.com/libkrun/libkrunfw ~/src/libkrunfw-src && cd ~/src/libkrunfw-src && git checkout v5.6.4
-mkdir -p tarballs && curl -fL -o tarballs/v5.6.4-6.12.115.tar.gz https://github.com/libkrun/linux/archive/refs/tags/v5.6.4-6.12.115.tar.gz
-echo "050fcea96b607e49f135f270472bc95346c172c9d6df5f9256aeb6f7972675d5  tarballs/v5.6.4-6.12.115.tar.gz" | sha256sum -c
+git clone https://github.com/libkrun/libkrunfw ~/src/libkrunfw-src && cd ~/src/libkrunfw-src && git checkout v5.6.4 &&
+mkdir -p tarballs && curl -fL -o tarballs/v5.6.4-6.12.115.tar.gz https://github.com/libkrun/linux/archive/refs/tags/v5.6.4-6.12.115.tar.gz &&
+echo "050fcea96b607e49f135f270472bc95346c172c9d6df5f9256aeb6f7972675d5  tarballs/v5.6.4-6.12.115.tar.gz" | sha256sum -c &&
 make -j"$(nproc)" && make PREFIX="$HOME/src/libkrunfw/usr" install
 ```
 

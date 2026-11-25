@@ -115,14 +115,15 @@ The engine needs:
 
 libkrunfw's kernel, seeded and checked before `make` runs: the Makefile
 skips its own download (`curl`, unchecked) when the tarball is there, and
-`sha256sum -c` stops the build on a different one.
+`sha256sum -c` stops the build on a different one (each step is chained
+with `&&`, so a failed download or check runs nothing after it).
 
 ```sh
-git clone https://github.com/libkrun/libkrunfw && cd libkrunfw
-git checkout b31ee3033103aaabdfef63e3d12a6ada873ace92   # v5.6.4
-mkdir -p tarballs
-curl -fL -o tarballs/v5.6.4-6.12.115.tar.gz https://github.com/libkrun/linux/archive/refs/tags/v5.6.4-6.12.115.tar.gz
-echo "050fcea96b607e49f135f270472bc95346c172c9d6df5f9256aeb6f7972675d5  tarballs/v5.6.4-6.12.115.tar.gz" | sha256sum -c
+git clone https://github.com/libkrun/libkrunfw && cd libkrunfw &&
+git checkout b31ee3033103aaabdfef63e3d12a6ada873ace92 &&   # v5.6.4
+mkdir -p tarballs &&
+curl -fL -o tarballs/v5.6.4-6.12.115.tar.gz https://github.com/libkrun/linux/archive/refs/tags/v5.6.4-6.12.115.tar.gz &&
+echo "050fcea96b607e49f135f270472bc95346c172c9d6df5f9256aeb6f7972675d5  tarballs/v5.6.4-6.12.115.tar.gz" | sha256sum -c &&
 make -j"$(nproc)" && make PREFIX="$PREFIX" install
 ```
 

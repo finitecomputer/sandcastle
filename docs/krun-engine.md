@@ -702,7 +702,7 @@ its disks), on the box's runner, libkrun and libkrunfw (6.12.115):
 
 From the weekly upkeep audit. Evidence:
 `krun-engine-evidence/deps-2026-11-24/`. Those VMs ran unjailed, with no
-engine. The box's engine still runs the 2026-11-11 libraries until it is
+engine, before the runner refused pause and resume. The box's engine still runs the 2026-11-11 libraries until it is
 installed again (README, Running it on a KVM host).
 
 **libkrun** `c9327bda` -> `715c1c98` (main, 2026-11-23, 37 commits).
@@ -719,11 +719,15 @@ Windows, macOS, riscv64 and GPU commits are other platforms' or devices'.
   The guest no longer sees `constant_tsc` or `nonstop_tsc`, so Linux keeps
   the paravirtual clock. Upstream chose this default, and the gate does not
   opt in.
-- **Pause and resume now work on Linux** (b487e3a6, cb0721cc). Before, they
-  returned "feature not enabled in this build". Now the runner's `pause`
-  answers `Done` in 3 µs and `resume` in 4 µs. The guest's clock is held
-  while it is paused: a 3 s pause moved `/proc/uptime` by 0.01 s. Neither
-  the engine nor the driver asks for a pause.
+- **Pause and resume stay off.** libkrun now does them on Linux
+  (b487e3a6, cb0721cc), but its answer only says the request was queued.
+  The runner cannot tell when the guest stopped or ran again. An exit
+  arriving in between would be refused and lost, and a failed resume would
+  still read as ready. So the runner refuses both, as libkrun did before
+  ("feature not enabled in this build"), and the gate no longer loads them.
+  They stay off until a completion can be acknowledged. Nothing asks for a
+  pause. In the unjailed run, the guest's clock was held while it was
+  paused (a 3 s pause moved `/proc/uptime` by 0.01 s).
 - **Transparent huge pages** for guest memory are an opt-in
   (`krun_vmm_builder_transparent_huge_pages`, abe0a0f6). Off by default,
   they change nothing here. Memory in use, idle and after 1 GiB freed, was
@@ -759,7 +763,7 @@ before, none after.
 | memory in use, idle +20 s | 111, 95 MiB | 84, 107 MiB |
 | 1 GiB held in the guest | 1143, 1130 MiB | 1118, 1140 MiB |
 | 45 s after it is freed | 133, 118 MiB | 106, 125 MiB |
-| runner `pause` | refused: not enabled | done, 3 µs |
+| runner `pause` (libkrun's) | refused: not enabled | queued; the runner now refuses it |
 
 ### Debt
 

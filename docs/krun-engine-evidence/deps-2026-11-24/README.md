@@ -11,7 +11,8 @@ host's THP is `always`. The same sandcastle binaries (this branch) ran both:
 
 Memory is the VM scope's `memory.current` and the VMM's `smaps_rollup`,
 idle, with 1 GiB held in a guest tmpfs, and after that memory is freed. Pause
-and resume go through the runner's control socket.
+and resume go through the runner's control socket. That was before the
+runner refused both: libkrun only queues them, so the times are a queue's.
 
 `kernel-v5.6.3-to-v5.6.4.diff` is `diff -r` of libkrun/linux's two tags:
 one change, in `net/vmw_vsock/af_vsock.c`.
