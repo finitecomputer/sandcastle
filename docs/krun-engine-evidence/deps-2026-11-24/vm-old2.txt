@@ -1,0 +1,43 @@
+== old2 libs: 161df53f21435ca5 c09454711c257d77
+events: {"build_us":12283,"event":"launched","id":"upkeep-old2","t_us":12284} {"event":"hello","guest_uptime_ms":96,"t_us":188748} {"event":"ready","guest_uptime_ms":101,"t_us":193462} 
+start to ready (host, incl. systemd-run): 255 ms
+== guest clock
+current: tsc
+available: tsc kvm-clock 
+cpu flags: tsc rdtscp constant_tsc nonstop_tsc tsc_known_freq tsc_deadline_timer tsc_adjust tsc_scale 
+[    0.043840] TSC deadline timer available
+[    0.044010] clocksource: refined-jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645519600211568 ns
+[    0.054725] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.056164] clocksource: tsc-early: mask: 0xffffffffffffffff max_cycles: 0x3dfb66ac9ad, max_idle_ns: 440795259306 ns
+[    0.060875] clocksource: Switched to clocksource kvm-clock
+[    0.064505] clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x3dfb66ac9ad, max_idle_ns: 440795259306 ns
+[    0.064536] clocksource: Switched to clocksource tsc
+6.12.115
+== memory
+-- ready: cgroup memory.current 99 MiB; VMM Rss: 90384 kB AnonHugePages: 0 kB 
+-- idle +20 s: cgroup memory.current 95 MiB; VMM Rss: 90264 kB AnonHugePages: 0 kB 
+MemTotal:        2075336 kB
+MemFree:         2043580 kB
+AnonHugePages:         0 kB
+always [madvise] never
+1073741824 bytes (1.0GB) copied, 1.935400 seconds, 529.1MB/s
+-- 1 GiB held: cgroup memory.current 1130 MiB; VMM Rss: 1144436 kB AnonHugePages: 102400 kB 
+-- freed +15 s: cgroup memory.current 142 MiB; VMM Rss: 130676 kB AnonHugePages: 0 kB 
+-- freed +45 s: cgroup memory.current 118 MiB; VMM Rss: 106292 kB AnonHugePages: 0 kB 
+== pause and resume
+67.16 132.15
+Ok(Error { message: "krun_vmm_handle_pause: feature not enabled in this build" })
+Ok(Status { state: "{\"state\":\"ready\"}" })
+Ok(Error { message: "Resumed is not allowed while Ready" })
+Ok(Status { state: "{\"state\":\"ready\"}" })
+70.17 138.15
+[    0.098845] EXT4-fs (vdb): mounted filesystem 1543b559-f11f-43d9-a89c-24c534dfff52 ro without journal. Quota mode: disabled.
+[    0.101528] EXT4-fs (vdc): mounted filesystem db9de72b-a69e-49d3-b881-87954fa2325e r/w without journal. Quota mode: disabled.
+[    0.102071] overlayfs: "xino" feature enabled using 32 upper inode bits.
+Err(Wire(Closed))
+runner stderr: [2026-11-25T00:52:34.350372Z WARN  krun_devices::virtio::vsock::muxer_thread] deferring proxy removal: 4398710630561
+[2026-11-25T00:52:54.359539Z WARN  krun_devices::virtio::vsock::muxer_thread] deferring proxy removal: 4400888862678
+[2026-11-25T00:52:56.298226Z WARN  krun_devices::virtio::vsock::muxer_thread] deferring proxy removal: 4398518861250
+[2026-11-25T00:53:41.343996Z WARN  krun_devices::virtio::vsock::muxer_thread] deferring proxy removal: 4402068600423
+[2026-11-25T00:53:44.348973Z WARN  krun_devices::virtio::vsock::muxer_thread] deferring proxy removal: 4399720194559
+done

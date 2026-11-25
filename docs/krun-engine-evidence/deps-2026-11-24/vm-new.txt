@@ -1,0 +1,42 @@
+== new libs: 47098ab7a391f1f6 04254c5ee812e035
+events: {"build_us":9503,"event":"launched","id":"upkeep-new","t_us":9504} {"event":"hello","guest_uptime_ms":75,"t_us":145330} {"event":"ready","guest_uptime_ms":80,"t_us":150206} 
+start to ready (host, incl. systemd-run): 206 ms
+== guest clock
+current: kvm-clock
+available: kvm-clock tsc 
+cpu flags: tsc rdtscp tsc_known_freq tsc_deadline_timer tsc_adjust tsc_scale 
+[    0.000031] tsc: Detected 4300.004 MHz processor
+[    0.024316] TSC deadline timer available
+[    0.024489] clocksource: refined-jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645519600211568 ns
+[    0.032940] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.034394] clocksource: tsc-early: mask: 0xffffffffffffffff max_cycles: 0x3dfb66ac9ad, max_idle_ns: 440795259306 ns
+[    0.038597] clocksource: Switched to clocksource kvm-clock
+[    0.042874] clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x3dfb66ac9ad, max_idle_ns: 440795259306 ns
+6.12.115
+== memory
+-- ready: cgroup memory.current 87 MiB; VMM Rss: 94044 kB AnonHugePages: 40960 kB 
+-- idle +20 s: cgroup memory.current 84 MiB; VMM Rss: 93352 kB AnonHugePages: 38912 kB 
+MemTotal:        2075336 kB
+MemFree:         2045912 kB
+AnonHugePages:         0 kB
+always [madvise] never
+1073741824 bytes (1.0GB) copied, 1.776041 seconds, 576.6MB/s
+-- 1 GiB held: cgroup memory.current 1118 MiB; VMM Rss: 1146628 kB AnonHugePages: 59392 kB 
+-- freed +15 s: cgroup memory.current 106 MiB; VMM Rss: 110348 kB AnonHugePages: 38912 kB 
+-- freed +45 s: cgroup memory.current 106 MiB; VMM Rss: 110540 kB AnonHugePages: 38912 kB 
+== pause and resume
+66.98 131.98
+Ok(Done { micros: 3 })
+Ok(Status { state: "{\"state\":\"paused\"}" })
+Ok(Done { micros: 4 })
+Ok(Status { state: "{\"state\":\"ready\"}" })
+66.98 131.99
+[    0.077471] EXT4-fs (vdb): mounted filesystem 877c16e4-f9f9-4b39-a19a-8b6a274eb557 ro without journal. Quota mode: disabled.
+[    0.080266] EXT4-fs (vdc): mounted filesystem 65d36a82-a2d3-4a68-a155-31fe4751bd75 r/w without journal. Quota mode: disabled.
+[    0.080700] overlayfs: "xino" feature enabled using 32 upper inode bits.
+Err(Wire(Closed))
+runner stderr: [2026-11-25T00:50:38.703225Z WARN  krun_devices::virtio::vsock::muxer_thread] deferring proxy removal: 4401337109309
+[2026-11-25T00:50:58.711568Z WARN  krun_devices::virtio::vsock::muxer_thread] deferring proxy removal: 4400287501692
+[2026-11-25T00:51:45.536430Z WARN  krun_devices::virtio::vsock::muxer_thread] deferring proxy removal: 4398412138656
+[2026-11-25T00:51:48.542219Z WARN  krun_devices::virtio::vsock::muxer_thread] deferring proxy removal: 4398532431363
+done
