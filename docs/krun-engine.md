@@ -709,10 +709,9 @@ installed again (README, Running it on a KVM host).
 None of them fixes something sandcastle reaches: TSI is off, and the
 Windows, macOS, riscv64 and GPU commits are other platforms' or devices'.
 
-- **The gate is unchanged.** `libkrun.h` gained 62 lines and lost none.
-  Every one of the 25 functions the gate loads (28 before pause and resume
-  went) is declared the same and
-  exported by the new build. The PushStr vtable, the vtable handle and the
+- **The gate dropped pause, resume and the VMM handle** (25 functions
+  loaded, 28 before). `libkrun.h` gained 62 lines and lost none. Each of
+  the 25 is declared the same and exported by the new build. The PushStr vtable, the vtable handle and the
   enum constants it uses are the same. `libkrun_init.h` (the control
   socket, not loaded here) lost 2 lines.
 - **The guest's clock moved from `tsc` to `kvm-clock`.** Invariant TSC
