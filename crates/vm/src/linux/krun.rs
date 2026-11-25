@@ -4,8 +4,8 @@
 //! globally, so libkrun's own `dlopen("libkrunfw.so.5")` finds it by its
 //! soname instead of searching the system.
 //!
-//! Pinned: libkrun c9327bda (Apache-2.0), libkrunfw a9320d97 (v5.6.3,
-//! LGPL-2.1, its kernel GPL-2.0), docs/krun-spike.md, Dependencies. The
+//! Pinned: libkrun 715c1c98 (Apache-2.0), libkrunfw b31ee303 (v5.6.4,
+//! LGPL-2.1, its kernel GPL-2.0), docs/krun-engine.md, Dependencies. The
 //! layouts below are libkrun.h's at that commit (ffier 0.3).
 
 use std::ffi::{c_char, c_int, c_void, CString};

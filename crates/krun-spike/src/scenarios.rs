@@ -102,8 +102,8 @@ fn versions(layout: &Layout) -> Value {
         std::fs::read(&p).map(|b| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&b))[..16].to_string()).unwrap_or_default()
     };
     json!({
-        "libkrun": "c9327bda52ee0c93d803ee12f409fc6b52c52fab",
-        "libkrunfw": "a9320d977080d548bca059ac8883b4acfb13ba61 (5.6.3, linux 6.12.115)",
+        "libkrun": "715c1c9857576c7a1e2057abcaf4a782ba527f97",
+        "libkrunfw": "b31ee3033103aaabdfef63e3d12a6ada873ace92 (5.6.4, linux 6.12.115)",
         "guest_sha256_16": sha(layout.bin("sandcastle-guest")),
         "runner_sha256_16": sha(layout.bin("sandcastle-vm")),
         "engine_sha256_16": sha(layout.bin("sandcastle-engine")),

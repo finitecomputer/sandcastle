@@ -98,13 +98,13 @@ The engine needs:
   `mke2fs`, and `nft` (aarch64, as on a Mac's Linux VM with nested
   virtualization: docs/mac.md). A node runs images of its own
   architecture (`linux/amd64` or `linux/arm64`);
-- libkrun `c9327bda52ee0c93d803ee12f409fc6b52c52fab` (main, 2.0.0-dev;
+- libkrun `715c1c9857576c7a1e2057abcaf4a782ba527f97` (main, 2.0.0-dev;
   built with `cargo build --release --locked -p libkrun --features
-  ffi,blk,net`) and libkrunfw `a9320d977080d548bca059ac8883b4acfb13ba61`
-  (v5.6.3, Linux 6.12.115), built into a prefix and loaded from there by
+  ffi,blk,net`) and libkrunfw `b31ee3033103aaabdfef63e3d12a6ada873ace92`
+  (v5.6.4, Linux 6.12.115), built into a prefix and loaded from there by
   path, never installed system-wide. libkrunfw's Makefile downloads its
   kernel with no checksum, so seed the tarball and check it first (below).
-  Why these (docs/krun-engine.md, Dependencies, 2026-11-11);
+  Why these (docs/krun-engine.md, Dependencies, 2026-11-24);
 - the guest built static:
   `cargo build --release -p sandcastle-guest --target x86_64-unknown-linux-musl`
   (`aarch64-unknown-linux-musl` on arm64);
@@ -119,10 +119,10 @@ skips its own download (`curl`, unchecked) when the tarball is there, and
 
 ```sh
 git clone https://github.com/libkrun/libkrunfw && cd libkrunfw
-git checkout a9320d977080d548bca059ac8883b4acfb13ba61   # v5.6.3
+git checkout b31ee3033103aaabdfef63e3d12a6ada873ace92   # v5.6.4
 mkdir -p tarballs
-curl -fL -o tarballs/v5.6.3-6.12.115.tar.gz https://github.com/libkrun/linux/archive/refs/tags/v5.6.3-6.12.115.tar.gz
-echo "62841e8af1a0e6630c12dd2f36d4f2bd352b32715780308bd9c364a8e1fd4ede  tarballs/v5.6.3-6.12.115.tar.gz" | sha256sum -c
+curl -fL -o tarballs/v5.6.4-6.12.115.tar.gz https://github.com/libkrun/linux/archive/refs/tags/v5.6.4-6.12.115.tar.gz
+echo "050fcea96b607e49f135f270472bc95346c172c9d6df5f9256aeb6f7972675d5  tarballs/v5.6.4-6.12.115.tar.gz" | sha256sum -c
 make -j"$(nproc)" && make PREFIX="$PREFIX" install
 ```
 
